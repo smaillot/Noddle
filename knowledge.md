@@ -104,3 +104,22 @@
 - **Phase 2**: Source caméra live, preview par nœud, overload strategies production, bibliothèque OpenCV étendue.
 - **Phase 3**: Export code C++, undo/redo, copy/paste, groupes/sous-pipelines, erreurs visuelles.
 - **Phase 4**: Plugins Python/C++ custom, file d'exécution async, ONNX Runtime, export exécutable.
+
+## Phase 1 Status (2026-04-19) ✅ VALIDATED
+- 4 NodeData types: TensorData, ImageData, TableData, PointCloudData (`app/data/`)
+- 4 source/display models: ImageSourceModel, CsvSourceModel, PointCloudSourceModel, ImageDisplayModel (`app/nodes/`)
+- 7 OpenCV models (conditional `NODDLE_WITH_OPENCV`): MatConvert, ColorConvert, Resize, GaussianBlur, Threshold, Canny, Morphology (`app/nodes/opencv/`)
+- Full node registry in 3 categories (Sources, Display, OpenCV)
+- Merged to `develop` from `feature/phase1-node-models`
+
+## Phase 2 Status (2026-04-19) — IN PROGRESS
+- `NoddleMainWindow` class: proper QMainWindow subclass owning graph model, scene, view
+- `PreviewPanel` QDockWidget: right dock, shows selected node caption + widget grab preview
+- File menu: New (Ctrl+N), Open (Ctrl+O), Save (Ctrl+S), Save As (Ctrl+Shift+S), Quit (Ctrl+Q)
+- Edit menu: Undo (Ctrl+Z), Redo (Ctrl+Shift+Z) via scene undo stack
+- View menu: Toggle Preview Panel
+- JSON save/load: `.noddle` file format using DataFlowGraphModel::save()/load()
+- Modified state tracking: `●` prefix in title, save prompt on close/new/open
+- Refactored main.cpp to minimal 13-line entry point
+- Build: 100%, Tests: 37/37, App: launches OK
+- Branch: `feature/phase2-main-window`

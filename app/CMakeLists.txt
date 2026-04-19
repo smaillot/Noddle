@@ -5,6 +5,10 @@ qt_standard_project_setup()
 
 set(APP_SOURCES
     main.cpp
+    NoddleMainWindow.hpp
+    NoddleMainWindow.cpp
+    PreviewPanel.hpp
+    PreviewPanel.cpp
     nodes/ImageSourceModel.hpp
     nodes/CsvSourceModel.hpp
     nodes/PointCloudSourceModel.hpp
