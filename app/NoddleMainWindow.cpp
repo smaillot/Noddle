@@ -276,9 +276,9 @@ NoddleMainWindow::NoddleMainWindow(QWidget *parent)
     connect(m_scene, &DataFlowGraphicsScene::modified,
             this, &NoddleMainWindow::onSceneModified);
 
-    setupMenus();
-
     m_executor = new noddle::PipelineExecutor(*m_graphModel, this);
+
+    setupMenus();
 
     connect(m_executor, &noddle::PipelineExecutor::nodeOutputReady,
             m_previewPanel, [this](QtNodes::NodeId nodeId, QtNodes::PortIndex) {
