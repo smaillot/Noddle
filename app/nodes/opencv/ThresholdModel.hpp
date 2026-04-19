@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QtNodes/NodeDelegateModel>
+#include <QJsonObject>
 #include <QSpinBox>
 #include <QComboBox>
 #include <QVBoxLayout>
@@ -34,12 +35,39 @@ public:
     void setInData(std::shared_ptr<QtNodes::NodeData> data, QtNodes::PortIndex) override
     {
         m_input = std::dynamic_pointer_cast<ImageData>(data);
+        if (!data) {
+            setValidationState({QtNodes::NodeValidationState::State::Warning, "Missing input"});
+            m_output.reset();
+            Q_EMIT dataUpdated(0);
+            return;
+        }
+        if (!m_input) {
+            setValidationState({QtNodes::NodeValidationState::State::Error, "Type mismatch"});
+            m_output.reset();
+            Q_EMIT dataUpdated(0);
+            return;
+        }
+        setValidationState({QtNodes::NodeValidationState::State::Valid, ""});
         process();
     }
 
     std::shared_ptr<QtNodes::NodeData> outData(QtNodes::PortIndex) override
     {
         return m_output;
+    }
+
+    QJsonObject save() const override
+    {
+        auto j = NodeDelegateModel::save();
+        j["threshValue"] = m_threshSpin ? m_threshSpin->value() : m_threshValue;
+        j["typeIndex"] = m_typeCombo ? m_typeCombo->currentIndex() : m_typeIndex;
+        return j;
+    }
+
+    void load(QJsonObject const &j) override
+    {
+        m_threshValue = j["threshValue"].toInt(128);
+        m_typeIndex = j["typeIndex"].toInt(0);
     }
 
     QWidget *embeddedWidget() override
@@ -51,10 +79,11 @@ public:
 
             m_threshSpin = new QSpinBox();
             m_threshSpin->setRange(0, 255);
-            m_threshSpin->setValue(128);
+            m_threshSpin->setValue(m_threshValue);
 
             m_typeCombo = new QComboBox();
             m_typeCombo->addItems({"Binary", "Binary Inv", "Otsu"});
+            m_typeCombo->setCurrentIndex(m_typeIndex);
 
             layout->addWidget(new QLabel("Threshold"));
             layout->addWidget(m_threshSpin);
@@ -91,14 +120,14 @@ private:
 
             cv::Mat dst;
             int type = cv::THRESH_BINARY;
-            if (m_typeCombo) {
-                switch (m_typeCombo->currentIndex()) {
-                case 0: type = cv::THRESH_BINARY; break;
-                case 1: type = cv::THRESH_BINARY_INV; break;
-                case 2: type = cv::THRESH_BINARY | cv::THRESH_OTSU; break;
-                }
+            int tidx = m_typeCombo ? m_typeCombo->currentIndex() : m_typeIndex;
+            switch (tidx) {
+            case 0: type = cv::THRESH_BINARY; break;
+            case 1: type = cv::THRESH_BINARY_INV; break;
+            case 2: type = cv::THRESH_BINARY | cv::THRESH_OTSU; break;
             }
-            cv::threshold(gray, dst, m_threshSpin->value(), 255, type);
+            int tv = m_threshSpin ? m_threshSpin->value() : m_threshValue;
+            cv::threshold(gray, dst, tv, 255, type);
             m_output = std::make_shared<ImageData>(matToQImage(dst));
 #else
             m_output = m_input;
@@ -117,6 +146,8 @@ private:
     QSpinBox *m_threshSpin = nullptr;
     QComboBox *m_typeCombo = nullptr;
     QLabel *m_timeLabel = nullptr;
+    int m_threshValue = 128;
+    int m_typeIndex = 0;
     std::shared_ptr<ImageData> m_input;
     std::shared_ptr<ImageData> m_output;
 };

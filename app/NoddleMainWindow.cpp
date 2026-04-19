@@ -155,6 +155,28 @@ void NoddleMainWindow::setupMenus()
     editMenu->addAction(m_scene->undoStack().createUndoAction(this, tr("&Undo")));
     editMenu->addAction(m_scene->undoStack().createRedoAction(this, tr("&Redo")));
 
+    editMenu->addSeparator();
+
+    auto *cutAct = editMenu->addAction(tr("Cu&t"));
+    connect(cutAct, &QAction::triggered, this, [this]() {
+        m_graphicsView->onCopySelectedObjects();
+        m_graphicsView->onDeleteSelectedObjects();
+    });
+
+    editMenu->addAction(tr("&Copy"), m_graphicsView,
+                        &QtNodes::GraphicsView::onCopySelectedObjects);
+
+    editMenu->addAction(tr("&Paste"), m_graphicsView,
+                        &QtNodes::GraphicsView::onPasteObjects);
+
+    editMenu->addSeparator();
+
+    editMenu->addAction(tr("&Duplicate"), m_graphicsView,
+                        &QtNodes::GraphicsView::onDuplicateSelectedObjects);
+
+    editMenu->addAction(tr("D&elete"), m_graphicsView,
+                        &QtNodes::GraphicsView::onDeleteSelectedObjects);
+
     // --- View menu ---
     auto *viewMenu = menuBar()->addMenu(tr("&View"));
 

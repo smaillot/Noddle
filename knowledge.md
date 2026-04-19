@@ -102,7 +102,7 @@
 ### Revised Feature Roadmap
 - **Phase 1 (Priorité)**: Vrai node editor graphique Qt, searchbox, sérialisation JSON, auto-inférence types.
 - **Phase 2**: Source caméra live, preview par nœud, overload strategies production, bibliothèque OpenCV étendue.
-- **Phase 3**: Export code C++, undo/redo, copy/paste, groupes/sous-pipelines, erreurs visuelles.
+- **Phase 3** ✅: Export code C++, undo/redo, copy/paste, groupes/sous-pipelines, erreurs visuelles.
 
 ## Phase 3 — Live Camera Source (2026-04-19)
 - `CameraSourceModel` added: Qt6 Multimedia-based live camera node (QCamera + QVideoSink).
@@ -137,7 +137,7 @@
 - Refactored main.cpp to minimal 13-line entry point
 - Merged to `develop` from `feature/phase2-main-window`
 
-## Phase 3 Status (2026-04-19) — IN PROGRESS
+## Phase 3 Status (2026-04-19) ✅ VALIDATED
 - `CameraSourceModel`: live camera source using Qt6 Multimedia (QCamera + QMediaCaptureSession + QVideoSink)
   - Camera device selection via QComboBox
   - Start/Stop toggle button
@@ -250,3 +250,31 @@
 - **Dock floating**: Both PreviewPanel and TimelineView have `DockWidgetFloatable` feature + `AllDockWidgetAreas`, allowing detaching as independent windows and docking anywhere.
 - **Profiling control bar styling**: QSS on control bar sets white text for QLabel/QComboBox/QCheckBox, visible checkbox border (#888), checked state highlight (#5080c0).
 - Build: 100%, Tests: 37/37
+
+### Phase 3 — Completion Features (2026-04-19)
+- **Bar chart dezoom limit**: `TimelineWidget` (bar chart mode) zoom-out now capped at `m_totalMs * 1.3` (total pipeline time), matching stacked view behavior. Previously unlimited.
+- **Edit menu actions**: Cut, Copy, Paste, Duplicate, Delete wired to QtNodes v3 `GraphicsView` built-in slots (`onCopySelectedObjects()`, `onPasteObjects()`, `onDuplicateSelectedObjects()`, `onDeleteSelectedObjects()`). No custom clipboard logic — QtNodes handles serialization, ID remapping, position offset, and undo/redo. Clipboard format: `application/qt-nodes-graph`. Shortcuts: Ctrl+C/V/X/D, Delete.
+- **Node state persistence (save/load)**: All 11 `NodeDelegateModel` subclasses override `save()/load()` for configuration persistence:
+  - ImageSourceModel: file path
+  - CsvSourceModel: file path
+  - PointCloudSourceModel: file path
+  - CameraSourceModel: camera index + format index
+  - GaussianBlurModel: kernel size
+  - ColorConvertModel: conversion mode index
+  - ResizeModel: width + height
+  - ThresholdModel: threshold value + type index
+  - CannyModel: low/high thresholds
+  - MorphologyModel: operation index + kernel size
+  - `load()` called before `embeddedWidget()` — backing member fields store values, widget init reads them
+  - Source nodes (Image, CSV, PointCloud) reload data from path on `load()`
+- **Visual error indicators**: All processing nodes set `NodeValidationState` in `setInData()`:
+  - `Warning` when input is null/disconnected
+  - `Error` on type mismatch (safety net)
+  - `Valid` on successful input receipt
+  - Source nodes: `Warning` initially ("No file/image loaded"), `Valid` after load, `Error` on failure
+  - CameraSourceModel: warns when no cameras detected
+  - Rendering by QtNodes' `DefaultNodePainter` (red/orange border + tooltip icon)
+- **Code review fixes**:
+  - ImageDisplayModel: `dynamic_pointer_cast` moved after null check
+  - All OpenCV `process()` methods: widget null guards with backing field fallback
+  - Pattern: `m_spin ? m_spin->value() : m_backingField` for all widget reads in `process()`

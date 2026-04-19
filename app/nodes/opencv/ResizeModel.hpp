@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QtNodes/NodeDelegateModel>
+#include <QJsonObject>
 #include <QSpinBox>
 #include <QHBoxLayout>
 #include <QVBoxLayout>
@@ -34,12 +35,39 @@ public:
     void setInData(std::shared_ptr<QtNodes::NodeData> data, QtNodes::PortIndex) override
     {
         m_input = std::dynamic_pointer_cast<ImageData>(data);
+        if (!data) {
+            setValidationState({QtNodes::NodeValidationState::State::Warning, "Missing input"});
+            m_output.reset();
+            Q_EMIT dataUpdated(0);
+            return;
+        }
+        if (!m_input) {
+            setValidationState({QtNodes::NodeValidationState::State::Error, "Type mismatch"});
+            m_output.reset();
+            Q_EMIT dataUpdated(0);
+            return;
+        }
+        setValidationState({QtNodes::NodeValidationState::State::Valid, ""});
         process();
     }
 
     std::shared_ptr<QtNodes::NodeData> outData(QtNodes::PortIndex) override
     {
         return m_output;
+    }
+
+    QJsonObject save() const override
+    {
+        auto j = NodeDelegateModel::save();
+        j["width"] = m_widthSpin ? m_widthSpin->value() : m_width;
+        j["height"] = m_heightSpin ? m_heightSpin->value() : m_height;
+        return j;
+    }
+
+    void load(QJsonObject const &j) override
+    {
+        m_width = j["width"].toInt(640);
+        m_height = j["height"].toInt(480);
     }
 
     QWidget *embeddedWidget() override
@@ -53,11 +81,11 @@ public:
 
             m_widthSpin = new QSpinBox();
             m_widthSpin->setRange(1, 8192);
-            m_widthSpin->setValue(640);
+            m_widthSpin->setValue(m_width);
 
             m_heightSpin = new QSpinBox();
             m_heightSpin->setRange(1, 8192);
-            m_heightSpin->setValue(480);
+            m_heightSpin->setValue(m_height);
 
             sizeLayout->addWidget(new QLabel("W"));
             sizeLayout->addWidget(m_widthSpin);
@@ -89,11 +117,15 @@ private:
 #ifdef NODDLE_WITH_OPENCV
             cv::Mat src = qImageToMat(m_input->image());
             cv::Mat dst;
-            cv::resize(src, dst, cv::Size(m_widthSpin->value(), m_heightSpin->value()));
+            int w = m_widthSpin ? m_widthSpin->value() : m_width;
+            int h = m_heightSpin ? m_heightSpin->value() : m_height;
+            cv::resize(src, dst, cv::Size(w, h));
             m_output = std::make_shared<ImageData>(matToQImage(dst));
 #else
+            int w = m_widthSpin ? m_widthSpin->value() : m_width;
+            int h = m_heightSpin ? m_heightSpin->value() : m_height;
             m_output = std::make_shared<ImageData>(
-                m_input->image().scaled(m_widthSpin->value(), m_heightSpin->value()));
+                m_input->image().scaled(w, h));
 #endif
         }
         if (m_timeLabel) {
@@ -109,6 +141,8 @@ private:
     QSpinBox *m_widthSpin = nullptr;
     QSpinBox *m_heightSpin = nullptr;
     QLabel *m_timeLabel = nullptr;
+    int m_width = 640;
+    int m_height = 480;
     std::shared_ptr<ImageData> m_input;
     std::shared_ptr<ImageData> m_output;
 };
