@@ -47,6 +47,36 @@ include(CTest)
 include(Catch)
 catch_discover_tests(noddle_tests)
 
+# ── Integration tests (need QCoreApplication event loop) ─────────
+
+find_package(Qt6 REQUIRED COMPONENTS Test Concurrent)
+
+add_executable(noddle_integration_tests
+    test_integration_engine.cpp
+    DummyModels.hpp
+    ${CMAKE_SOURCE_DIR}/app/engine/GraphSchedule.cpp
+    ${CMAKE_SOURCE_DIR}/app/engine/PipelineExecutor.cpp
+)
+
+target_include_directories(noddle_integration_tests
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/app
+        ${CMAKE_SOURCE_DIR}/app/widgets
+)
+
+target_link_libraries(noddle_integration_tests
+    PRIVATE
+        Catch2::Catch2
+        noddle_core
+        Qt6::Core
+        Qt6::Widgets
+        Qt6::Test
+        Qt6::Concurrent
+        QtNodes::QtNodes
+)
+
+catch_discover_tests(noddle_integration_tests)
+
 # Run tests automatically after build
 add_custom_command(
     TARGET noddle_tests POST_BUILD
