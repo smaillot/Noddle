@@ -5,6 +5,7 @@
 #include "widgets/PipelineProfiler.hpp"
 
 #include <QtNodes/internal/NodeGraphicsObject.hpp>
+#include <QtNodes/internal/ConnectionIdUtils.hpp>
 
 #include <QAction>
 #include <QCloseEvent>
@@ -20,6 +21,7 @@
 #include <QMessageBox>
 #include <QSettings>
 #include <QStatusBar>
+#include <QUndoCommand>
 #include <QUndoStack>
 
 #include "nodes/ImageSourceModel.hpp"
@@ -41,6 +43,121 @@ using QtNodes::DataFlowGraphicsScene;
 using QtNodes::DataFlowGraphModel;
 using QtNodes::GraphicsView;
 using QtNodes::NodeDelegateModelRegistry;
+
+namespace {
+
+// Duplicate selected nodes without external connections.
+// Internal connections (both endpoints selected) are preserved.
+class DuplicateCommand : public QUndoCommand
+{
+public:
+    DuplicateCommand(DataFlowGraphicsScene *scene, DataFlowGraphModel *model,
+                     QPointF const &pastePos)
+        : m_scene(scene), m_model(model)
+    {
+        using QtNodes::NodeGraphicsObject;
+
+        // Collect selected node IDs
+        std::unordered_set<QtNodes::NodeId> selectedIds;
+        for (auto *item : scene->selectedItems()) {
+            if (auto *ngo = qgraphicsitem_cast<NodeGraphicsObject *>(item))
+                selectedIds.insert(ngo->nodeId());
+        }
+
+        if (selectedIds.empty()) {
+            setObsolete(true);
+            return;
+        }
+
+        // Access newNodeId() through the public base class interface
+        auto &graphModel = scene->graphModel();
+
+        // Compute average position of selected nodes
+        QPointF avgPos(0, 0);
+        for (auto id : selectedIds) {
+            QJsonObject nj = model->saveNode(id);
+            auto pos = nj["position"].toObject();
+            avgPos += QPointF(pos["x"].toDouble(), pos["y"].toDouble());
+        }
+        avgPos /= static_cast<double>(selectedIds.size());
+        QPointF offset = pastePos - avgPos;
+
+        // Build new node JSONs with remapped IDs and offset positions
+        std::unordered_map<QtNodes::NodeId, QtNodes::NodeId> idMap;
+        for (auto oldId : selectedIds) {
+            QJsonObject nodeJson = model->saveNode(oldId);
+            QtNodes::NodeId newId = graphModel.newNodeId();
+            idMap[oldId] = newId;
+
+            nodeJson["id"] = static_cast<qint64>(newId);
+
+            QJsonObject posJson = nodeJson["position"].toObject();
+            posJson["x"] = posJson["x"].toDouble() + offset.x();
+            posJson["y"] = posJson["y"].toDouble() + offset.y();
+            nodeJson["position"] = posJson;
+
+            m_nodesJson.append(nodeJson);
+        }
+
+        // Collect internal connections only (both endpoints selected)
+        std::set<std::tuple<int, int, int, int>> seen;
+        for (auto oldId : selectedIds) {
+            for (auto const &cid : model->allConnectionIds(oldId)) {
+                if (selectedIds.count(cid.outNodeId) && selectedIds.count(cid.inNodeId)) {
+                    auto key = std::make_tuple(
+                        static_cast<int>(cid.outNodeId), cid.outPortIndex,
+                        static_cast<int>(cid.inNodeId), cid.inPortIndex);
+                    if (seen.insert(key).second) {
+                        QtNodes::ConnectionId newCid{idMap[cid.outNodeId], cid.outPortIndex,
+                                                     idMap[cid.inNodeId], cid.inPortIndex};
+                        m_connsJson.append(QtNodes::toJson(newCid));
+                    }
+                }
+            }
+        }
+
+        setText("Duplicate");
+    }
+
+    void undo() override
+    {
+        // Delete connections first
+        for (auto const &cv : m_connsJson) {
+            m_model->deleteConnection(QtNodes::fromJson(cv.toObject()));
+        }
+        // Delete nodes
+        for (auto const &nv : m_nodesJson) {
+            m_model->deleteNode(nv.toObject()["id"].toInt());
+        }
+    }
+
+    void redo() override
+    {
+        m_scene->clearSelection();
+        // Load nodes
+        for (auto const &nv : m_nodesJson) {
+            QJsonObject nj = nv.toObject();
+            m_model->loadNode(nj);
+            auto *ngo = m_scene->nodeGraphicsObject(nj["id"].toInt());
+            if (ngo) {
+                ngo->setZValue(1.0);
+                ngo->setSelected(true);
+            }
+        }
+        // Load internal connections
+        for (auto const &cv : m_connsJson) {
+            m_model->addConnection(QtNodes::fromJson(cv.toObject()));
+        }
+    }
+
+private:
+    DataFlowGraphicsScene *m_scene;
+    DataFlowGraphModel *m_model;
+    QJsonArray m_nodesJson;
+    QJsonArray m_connsJson;
+};
+
+} // namespace
 
 NoddleMainWindow::NoddleMainWindow(QWidget *parent)
     : QMainWindow(parent)
@@ -171,8 +288,41 @@ void NoddleMainWindow::setupMenus()
 
     editMenu->addSeparator();
 
-    editMenu->addAction(tr("&Duplicate"), m_graphicsView,
-                        &QtNodes::GraphicsView::onDuplicateSelectedObjects);
+    editMenu->addAction(tr("&Duplicate"), this, [this]() {
+        QPointF pastePos = m_graphicsView->mapToScene(
+            m_graphicsView->mapFromGlobal(QCursor::pos()));
+        QRect vr = m_graphicsView->rect();
+        QPoint local = m_graphicsView->mapFromGlobal(QCursor::pos());
+        if (!vr.contains(local))
+            pastePos = m_graphicsView->mapToScene(vr.center());
+
+        m_scene->undoStack().push(
+            new DuplicateCommand(m_scene, m_graphModel, pastePos));
+    });
+
+    // Replace the built-in Ctrl+D (which duplicates WITH external connections)
+    for (auto *act : m_graphicsView->actions()) {
+        if (act->shortcut() == QKeySequence(Qt::CTRL | Qt::Key_D)) {
+            m_graphicsView->removeAction(act);
+            delete act;
+            break;
+        }
+    }
+    auto *dupShortcut = new QAction(this);
+    dupShortcut->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_D));
+    dupShortcut->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(dupShortcut, &QAction::triggered, this, [this]() {
+        QPointF pastePos = m_graphicsView->mapToScene(
+            m_graphicsView->mapFromGlobal(QCursor::pos()));
+        QRect vr = m_graphicsView->rect();
+        QPoint local = m_graphicsView->mapFromGlobal(QCursor::pos());
+        if (!vr.contains(local))
+            pastePos = m_graphicsView->mapToScene(vr.center());
+
+        m_scene->undoStack().push(
+            new DuplicateCommand(m_scene, m_graphModel, pastePos));
+    });
+    m_graphicsView->addAction(dupShortcut);
 
     editMenu->addAction(tr("D&elete"), m_graphicsView,
                         &QtNodes::GraphicsView::onDeleteSelectedObjects);
