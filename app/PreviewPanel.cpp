@@ -21,7 +21,8 @@ PreviewPanel::PreviewPanel(DataFlowGraphModel &graphModel, QWidget *parent)
     , m_graphModel(graphModel)
 {
     setMinimumWidth(300);
-    setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable);
+    setFeatures(QDockWidget::DockWidgetClosable | QDockWidget::DockWidgetMovable
+                | QDockWidget::DockWidgetFloatable);
 
     auto *container = new QWidget(this);
     auto *layout = new QVBoxLayout(container);
@@ -70,6 +71,17 @@ QImage PreviewPanel::extractPreviewImage(NodeId nodeId)
         auto *imgData = dynamic_cast<ImageData *>(data.get());
         if (imgData && !imgData->image().isNull())
             return imgData->image();
+    }
+
+    // For sink nodes (no output ports), try getting data via outData(0)
+    // which returns the internally stored received data
+    if (outPorts == 0) {
+        auto data = model->outData(0);
+        if (data) {
+            auto *imgData = dynamic_cast<ImageData *>(data.get());
+            if (imgData && !imgData->image().isNull())
+                return imgData->image();
+        }
     }
 
     return {};

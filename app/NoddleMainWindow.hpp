@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QMainWindow>
+#include <QStringList>
 #include <memory>
 
 #include <QtNodes/DataFlowGraphicsScene>
@@ -8,7 +9,11 @@
 #include <QtNodes/GraphicsView>
 #include <QtNodes/NodeDelegateModelRegistry>
 
+class QLabel;
+class QMenu;
+class QTimer;
 class PreviewPanel;
+class TimelineView;
 
 class NoddleMainWindow : public QMainWindow
 {
@@ -27,6 +32,7 @@ private slots:
     void onSaveFile();
     void onSaveFileAs();
     void onSceneModified();
+    void onOpenRecent();
 
 private:
     void setupMenus();
@@ -36,13 +42,23 @@ private:
     bool maybeSave();
     void loadFromFile(QString const &filePath);
     void saveToFile(QString const &filePath);
+    QString pipelinesDir() const;
+    void addRecentFile(QString const &filePath);
+    void updateRecentFilesMenu();
 
     std::shared_ptr<QtNodes::NodeDelegateModelRegistry> m_registry;
     QtNodes::DataFlowGraphModel *m_graphModel;
     QtNodes::DataFlowGraphicsScene *m_scene;
     QtNodes::GraphicsView *m_graphicsView;
     PreviewPanel *m_previewPanel;
+    TimelineView *m_timelineView;
+
+    QLabel *m_pipelineTimeLabel = nullptr;
+    QTimer *m_statusTimer = nullptr;
 
     QString m_currentFilePath;
     bool m_modified = false;
+
+    QMenu *m_recentMenu = nullptr;
+    static constexpr int kMaxRecentFiles = 8;
 };
