@@ -8,10 +8,12 @@
 #include <QtNodes/internal/ConnectionIdUtils.hpp>
 
 #include <QAction>
+#include <QApplication>
 #include <QCloseEvent>
 #include <QCoreApplication>
 #include <QDir>
 #include <QFileDialog>
+#include <QClipboard>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
@@ -19,6 +21,7 @@
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QMimeData>
 #include <QSettings>
 #include <QStatusBar>
 #include <QUndoCommand>
@@ -45,6 +48,56 @@ using QtNodes::GraphicsView;
 using QtNodes::NodeDelegateModelRegistry;
 
 namespace {
+
+// Serialize selected nodes with internal-only connections (both endpoints selected).
+QJsonObject serializeSelectionInternalOnly(DataFlowGraphicsScene *scene,
+                                           DataFlowGraphModel *model)
+{
+    using QtNodes::NodeGraphicsObject;
+
+    std::unordered_set<QtNodes::NodeId> selectedIds;
+    for (auto *item : scene->selectedItems()) {
+        if (auto *ngo = qgraphicsitem_cast<NodeGraphicsObject *>(item))
+            selectedIds.insert(ngo->nodeId());
+    }
+
+    QJsonArray nodesJson;
+    for (auto id : selectedIds)
+        nodesJson.append(model->saveNode(id));
+
+    QJsonArray connsJson;
+    std::set<std::tuple<int, int, int, int>> seen;
+    for (auto id : selectedIds) {
+        for (auto const &cid : model->allConnectionIds(id)) {
+            if (selectedIds.count(cid.outNodeId) && selectedIds.count(cid.inNodeId)) {
+                auto key = std::make_tuple(
+                    static_cast<int>(cid.outNodeId), cid.outPortIndex,
+                    static_cast<int>(cid.inNodeId), cid.inPortIndex);
+                if (seen.insert(key).second)
+                    connsJson.append(QtNodes::toJson(cid));
+            }
+        }
+    }
+
+    QJsonObject result;
+    result["nodes"] = nodesJson;
+    result["connections"] = connsJson;
+    return result;
+}
+
+// Copy selected nodes (internal connections only) to clipboard.
+void copySelectedToClipboard(DataFlowGraphicsScene *scene, DataFlowGraphModel *model)
+{
+    QJsonObject json = serializeSelectionInternalOnly(scene, model);
+    if (json["nodes"].toArray().isEmpty())
+        return;
+
+    auto *mimeData = new QMimeData();
+    QByteArray data = QJsonDocument(json).toJson();
+    mimeData->setData("application/qt-nodes-graph", data);
+    mimeData->setText(data);
+    QApplication::clipboard()->setMimeData(mimeData);
+}
 
 // Duplicate selected nodes without external connections.
 // Internal connections (both endpoints selected) are preserved.
@@ -276,12 +329,13 @@ void NoddleMainWindow::setupMenus()
 
     auto *cutAct = editMenu->addAction(tr("Cu&t"));
     connect(cutAct, &QAction::triggered, this, [this]() {
-        m_graphicsView->onCopySelectedObjects();
+        copySelectedToClipboard(m_scene, m_graphModel);
         m_graphicsView->onDeleteSelectedObjects();
     });
 
-    editMenu->addAction(tr("&Copy"), m_graphicsView,
-                        &QtNodes::GraphicsView::onCopySelectedObjects);
+    editMenu->addAction(tr("&Copy"), this, [this]() {
+        copySelectedToClipboard(m_scene, m_graphModel);
+    });
 
     editMenu->addAction(tr("&Paste"), m_graphicsView,
                         &QtNodes::GraphicsView::onPasteObjects);
@@ -323,6 +377,39 @@ void NoddleMainWindow::setupMenus()
             new DuplicateCommand(m_scene, m_graphModel, pastePos));
     });
     m_graphicsView->addAction(dupShortcut);
+
+    // Replace the built-in Ctrl+C (which copies WITH external connections)
+    for (auto *act : m_graphicsView->actions()) {
+        if (act->shortcut() == QKeySequence(QKeySequence::Copy)) {
+            m_graphicsView->removeAction(act);
+            delete act;
+            break;
+        }
+    }
+    auto *copyShortcut = new QAction(this);
+    copyShortcut->setShortcut(QKeySequence(QKeySequence::Copy));
+    copyShortcut->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(copyShortcut, &QAction::triggered, this, [this]() {
+        copySelectedToClipboard(m_scene, m_graphModel);
+    });
+    m_graphicsView->addAction(copyShortcut);
+
+    // Replace the built-in Ctrl+X (which copies WITH external connections before deleting)
+    for (auto *act : m_graphicsView->actions()) {
+        if (act->shortcut() == QKeySequence(Qt::CTRL | Qt::Key_X)) {
+            m_graphicsView->removeAction(act);
+            delete act;
+            break;
+        }
+    }
+    auto *cutShortcut = new QAction(this);
+    cutShortcut->setShortcut(QKeySequence(Qt::CTRL | Qt::Key_X));
+    cutShortcut->setShortcutContext(Qt::WidgetWithChildrenShortcut);
+    connect(cutShortcut, &QAction::triggered, this, [this]() {
+        copySelectedToClipboard(m_scene, m_graphModel);
+        m_graphicsView->onDeleteSelectedObjects();
+    });
+    m_graphicsView->addAction(cutShortcut);
 
     editMenu->addAction(tr("D&elete"), m_graphicsView,
                         &QtNodes::GraphicsView::onDeleteSelectedObjects);
