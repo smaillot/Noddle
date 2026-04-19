@@ -141,14 +141,112 @@
 - `CameraSourceModel`: live camera source using Qt6 Multimedia (QCamera + QMediaCaptureSession + QVideoSink)
   - Camera device selection via QComboBox
   - Start/Stop toggle button
-  - Frame rate throttle at ~30fps (QElapsedTimer)
+  - No frame throttle — delivers at camera native rate
   - FPS counter in embedded widget
   - 120x90 preview in node
 - `FpsCounter`: utility class for frame rate measurement (averaged over 1 second)
+- `ProcessingTimer`: utility class for processing time measurement (averaged over 10 samples)
+  - Added to all 6 OpenCV models and ImageDisplayModel
+  - Each node shows average processing time in ms in its embedded widget
 - `PreviewPanel` enhanced:
   - Auto-refresh on `inPortDataWasSet` (downstream nodes) and `dataUpdated` (source nodes)
   - Node-specific delegate model connection/disconnection on selection change
   - FPS display for preview refresh rate
+- `NoddleMainWindow` enhancements:
+  - `clearScene()` + `undoStack().clear()` for proper load/new (fixes blocks disorder)
+  - `centerScene()` after load to re-center view on loaded nodes
+  - Default directory: `pipelines/` next to executable (creates if missing)
+  - Recent Pipelines submenu (QSettings-based, max 8 entries, with Clear)
+  - Open/Save dialogs accept both `.noddle` and `.ndl` extensions
 - Qt6 Multimedia added: `qt6-multimedia-dev`, `Qt6::Multimedia` linked
 - Build: 100%, Tests: 37/37, App: launches OK
 - Branch: `feature/phase3-live-camera`
+
+### Phase 3 — Camera Format Selector + Threaded Processing (2026-04-19)
+- Camera format selector: QComboBox listing `QCameraDevice::videoFormats()` as "WxH @ fps"
+  - Default selection: 640x480 if available
+  - Camera restart on format change
+- Threaded frame processing: `QtConcurrent::run()` offloads `toImage()` + format conversion
+  - `std::atomic<bool> m_processing` frame-skip gate
+  - `QMetaObject::invokeMethod` posts results back to UI thread
+  - `m_processing.store(false)` released AFTER `invokeMethod` (in thread pool), not in UI callback
+    - This decouples processing throughput from UI update latency
+- Resolution display in FPS label: "640x480 @ 30.0 fps"
+- Qt6::Concurrent added to build
+
+### Phase 3 — Pipeline Profiling System (2026-04-19)
+- `PipelineProfiler` singleton (`app/widgets/PipelineProfiler.hpp`):
+  - Thread-safe (QMutex) central timing collection
+  - `record(nodeCaption, stageName, durationMs)` — records stage timing
+  - `markFrame(nodeCaption)` — marks frame boundary for FPS tracking
+  - `stat(node, stage, StatType, TimeWindow)` — returns computed statistic
+  - `fps(nodeCaption)` — FPS computed from frame markers (last 1.5s window)
+  - `snapshot(StatType, TimeWindow)` — all stages with computed durations
+  - `totalPipelineMs(StatType, TimeWindow)` — sum of all stage durations
+  - StatType: Min, Max, Avg, Median
+  - TimeWindow: AllTime, LastFrame, 10 Frames, 1s, 5s, 10s
+  - Max 10000 entries per stage (ring buffer)
+- `ScopeStageTimer` RAII helper: measures duration on construction/destruction, records to profiler
+- All OpenCV nodes + ImageDisplayModel: `ProcessingTimer` replaced by `ScopeStageTimer`
+  - Labels now query profiler for 1-second average
+- CameraSourceModel: instrumented with stages "decode", "convert", "preview"
+  - Frame boundary marked via `markFrame("Camera Source")`
+- `TimelineView` QDockWidget (`app/TimelineView.hpp/.cpp`):
+  - Custom-painted horizontal bar chart showing all profiled stages
+  - Bars scaled relative to longest stage, color-coded per node
+  - Node headers with indented stage rows
+  - Total pipeline time at bottom
+  - Bottom controls: Stat type combo (Avg/Min/Max/Median) + Time window combo
+  - Auto-refresh at 5 Hz
+
+### Phase 3 — Profiling & UI Polish (2026-04-19)
+- `PipelineProfiler` singleton: thread-safe (QMutex) stage timing, per-node FPS, frame-based time windows, RAII `ScopeStageTimer`.
+  - Copy/move constructors deleted (singleton enforcement).
+  - `updated()` signal emitted outside mutex lock to avoid deadlock with UI slot handlers.
+  - `markFrame()` validity guard: early return if globalTimer not yet started by `record()`.
+- `NoddleConnectionPainter`: custom `AbstractConnectionPainter` showing data type, FPS, and per-stage timing on connections. Compact label on idle, detailed (with metadata) on hover/selection.
+- `TimelineView`: dock widget with two modes — bar chart (stat/window selectable) and stacked single-frame timeline. Dual ruler (ms + fps). Mouse-wheel zoom. Tooltip on hover.
+- Floating dock windows: `Qt::Window` flags on detach, movable to other screens. "Re-dock All Panels" in View menu (`Ctrl+Shift+D`).
+- Recent files: `QSettings`-based recent pipeline menu, up to 8 entries, with Clear action.
+- View transform persistence: scale + center saved/restored in pipeline JSON (`viewTransform` key).
+- Node position sync: QGraphicsObject positions synced to model JSON before save (QtNodes bug workaround — dragged positions not always written back to model).
+- Dark theme: global QSS scoped to `QGraphicsView` descendants only. `#nodePreview` exception for preview label background.
+- `PreviewPanel`: supports sink nodes (0 output ports) via `outData(0)` fallback returning internally stored received data.
+- Image format extension changed from `.noddle` to `.ndl`. Open dialog accepts both.
+- File extension detection: `QFileInfo::suffix()` (not `contains('.')`).
+- `ImageDisplayModel`: uses `Qt::FastTransformation` for live preview scaling.
+- `ProcessingTimer`: deprecated in favor of `ScopeStageTimer`. Kept for reference.
+- 56 tests passing (37 core + 19 widget tests).
+
+### Phase 3 — Code Review Fixes (2026-04-19)
+- CRITICAL-1: CameraSource use-after-free fixed — `QFuture::waitForFinished()` in `stopCamera()` before destroying camera objects.
+- CRITICAL-2: PipelineProfiler `updated()` signal emitted outside mutex lock (was inside, risking deadlock).
+- CRITICAL-3: `markFrame()` validity guard — early return if `m_globalTimer` not valid (no `record()` called yet).
+- `ImageDisplayModel`: `FastTransformation` for live preview (was `SmoothTransformation`).
+- PipelineProfiler: copy/move constructors deleted (singleton enforcement).
+- `m_processing.store(false)` released BEFORE `QMetaObject::invokeMethod` to decouple processing throughput from UI latency.
+  - Toggleable via View > Pipeline Timeline menu
+- Status bar: permanent "Pipeline: X.XX ms" label, updated at 5 Hz
+- `NoddleConnectionPainter` enhanced:
+  - Compact label: shows data type + FPS if available (e.g., "Image 30.0fps")
+  - Detailed label (hover/select): type + resolution + FPS (e.g., "Image 640×480 @ 30.0fps")
+  - FPS queried from `PipelineProfiler::instance().fps(nodeCaption)`
+  - Node caption obtained via `model.nodeData(nodeId, NodeRole::Caption)`
+
+### Phase 3 — Timeline View v2 + UX Polish (2026-05-19)
+- `TimelineView` rewritten with two modes via QStackedWidget:
+  - **Bar chart mode** (`TimelineWidget`): horizontal bars with proper margins (kLeftMargin=10, kRightMargin=10, kDurTextWidth=70), duration text right-aligned. Auto-scale on first data then locked; user-controlled zoom via mouse wheel.
+  - **Stacked timeline mode** (`StackedTimelineWidget`): gantt-like chronological lanes per node, time-sorted bars, auto-scroll to latest, wheel zoom around mouse position, hover tooltips (node/stage/duration) via QToolTip hit-test rects.
+  - v2: Redesigned as single-lane sequential frame view — all pipeline stages side-by-side on one line, each node has its own color (same palette as bar chart). Zoom out capped at max frame processing time × 1.3. Color legend at bottom shows node-to-color mapping.
+  - v3: Uses snapshot (avg durations) starting at t=0 instead of raw timeline events. Single frame display, no frame grouping.
+  - Mode switch: "Stacked Timeline" QCheckBox in bottom controls.
+- **Dual ruler** (`drawDualRuler()`): top half graduated in ms, bottom half in fps, nice tick spacing via log10/pow rounding, separator line.
+- `PipelineProfiler` enhanced:
+  - `TimelineEvent` struct: `nodeCaption`, `stageName`, `timestampMs`, `durationMs`
+  - `timelineEvents(qint64 windowMs)` method: returns all entries from last windowMs, sorted by timestamp
+- **Node position fix on load**: view transform (scale + center point) now saved in `.noddle` JSON under `"viewTransform"` key, restored on load instead of calling `centerScene()`. Falls back to `centerScene()` for legacy files.
+- **Status bar FPS**: displays "Pipeline: X.XX ms (Y.Y fps)" instead of just ms.
+- **Dark theme stylesheet**: global QSS scoped to `QGraphicsView` descendants in `main.cpp` — transparent background for container QWidget, QComboBox, QPushButton with semi-transparent backgrounds and light text. Does not affect docks or main window controls.
+- **Dock floating**: Both PreviewPanel and TimelineView have `DockWidgetFloatable` feature + `AllDockWidgetAreas`, allowing detaching as independent windows and docking anywhere.
+- **Profiling control bar styling**: QSS on control bar sets white text for QLabel/QComboBox/QCheckBox, visible checkbox border (#888), checked state highlight (#5080c0).
+- Build: 100%, Tests: 37/37
