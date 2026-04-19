@@ -1,0 +1,15 @@
+cmake_minimum_required(VERSION 3.20)
+
+find_package(Qt6 REQUIRED COMPONENTS Widgets)
+qt_standard_project_setup()
+
+add_executable(noddle_app
+    main.cpp
+)
+
+target_link_libraries(noddle_app
+    PRIVATE
+        Qt6::Widgets
+        QtNodes::QtNodes
+        noddle_core
+)

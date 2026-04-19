@@ -1,11 +1,20 @@
+# noddle_core — C++ runtime library
+# Can be built standalone or as a subdirectory of the root project.
+
 cmake_minimum_required(VERSION 3.20)
-project(noddle_core LANGUAGES CXX)
 
-set(CMAKE_CXX_STANDARD 20)
-set(CMAKE_CXX_STANDARD_REQUIRED ON)
-set(CMAKE_CXX_EXTENSIONS OFF)
+if(NOT CMAKE_PROJECT_NAME)
+    project(noddle_core LANGUAGES CXX)
+    set(CMAKE_CXX_STANDARD 20)
+    set(CMAKE_CXX_STANDARD_REQUIRED ON)
+    set(CMAKE_CXX_EXTENSIONS OFF)
+endif()
 
-find_package(OpenCV QUIET COMPONENTS core imgproc imgcodecs)
+if(NODDLE_WITH_OPENCV)
+    find_package(OpenCV REQUIRED COMPONENTS core imgproc imgcodecs)
+elseif(NOT DEFINED NODDLE_WITH_OPENCV)
+    find_package(OpenCV QUIET COMPONENTS core imgproc imgcodecs)
+endif()
 
 add_library(noddle_core
     src/runtime.cpp
@@ -23,8 +32,5 @@ if(OpenCV_FOUND)
     target_link_libraries(noddle_core PUBLIC ${OpenCV_LIBS})
 endif()
 
-add_executable(noddle_core_demo
-    src/main.cpp
-)
-
+add_executable(noddle_core_demo src/main.cpp)
 target_link_libraries(noddle_core_demo PRIVATE noddle_core)
