@@ -22,6 +22,8 @@ public slots:
     void onNodeSelected(QtNodes::NodeId nodeId);
 
 private:
+    QImage extractPreviewImage(QtNodes::NodeId nodeId);
+
     QtNodes::DataFlowGraphModel &m_graphModel;
     QLabel *m_nodeNameLabel;
     QLabel *m_previewLabel;

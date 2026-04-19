@@ -93,17 +93,11 @@ void NoddleMainWindow::setupMenus()
     quitAct->setShortcut(QKeySequence::Quit);
 
     // --- Edit menu ---
+    // Note: Ctrl+Z / Ctrl+Shift+Z shortcuts are already registered
+    // by QtNodes GraphicsView. Menu items work via mouse click.
     auto *editMenu = menuBar()->addMenu(tr("&Edit"));
-
-    auto *undoAct = m_scene->undoStack().createUndoAction(this, tr("&Undo"));
-    undoAct->setShortcut(QKeySequence::Undo);
-    undoAct->setShortcutContext(Qt::ApplicationShortcut);
-    editMenu->addAction(undoAct);
-
-    auto *redoAct = m_scene->undoStack().createRedoAction(this, tr("&Redo"));
-    redoAct->setShortcut(QKeySequence::Redo);
-    redoAct->setShortcutContext(Qt::ApplicationShortcut);
-    editMenu->addAction(redoAct);
+    editMenu->addAction(m_scene->undoStack().createUndoAction(this, tr("&Undo")));
+    editMenu->addAction(m_scene->undoStack().createRedoAction(this, tr("&Redo")));
 
     // --- View menu ---
     auto *viewMenu = menuBar()->addMenu(tr("&View"));
