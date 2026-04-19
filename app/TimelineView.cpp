@@ -199,7 +199,15 @@ protected:
     void wheelEvent(QWheelEvent *event) override
     {
         double factor = (event->angleDelta().y() > 0) ? 0.85 : 1.18;
-        m_scaleMs = std::max(0.1, m_scaleMs * factor);
+        double newScale = m_scaleMs * factor;
+
+        // Can't zoom out beyond total pipeline time (with margin)
+        if (m_totalMs > 0.01) {
+            double maxZoomOut = m_totalMs * 1.3;
+            if (newScale > maxZoomOut)
+                newScale = maxZoomOut;
+        }
+        m_scaleMs = std::max(0.1, newScale);
         m_scaleInitialized = true;
         update();
         event->accept();
