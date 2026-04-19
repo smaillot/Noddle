@@ -54,18 +54,26 @@
 - Build and demo execution re-validated successfully after MVP updates.
 
 ## Frontend Status (2026-04-11)
-- Frontend MVP created in `frontend/ryven/app.py` with:
-	- block catalog
-	- linear pipeline editor view
-	- live preview panel
-	- overload strategy controls aligned with runtime policy
-- Baseline block list in frontend matches MVP source and OpenCV nodes.
-- Python syntax validation passed (`python3 -m py_compile app.py`).
+- **PySide6 frontend REMOVED** (Phase 0, 2026-04-19). Replaced by C++/Qt6 native frontend.
+- New frontend in `app/` using Qt6 + QtNodes (paceholder/nodeeditor).
+- QtNodes integrated as git submodule at `external/nodeeditor`.
+- Minimal main.cpp with DataFlowGraphModel + GraphicsView + QMainWindow scaffold.
+- Build validated: all 4 targets compile (noddle_core, noddle_core_demo, QtNodes, noddle_app).
+
+## Build System (2026-04-19)
+- Root `CMakeLists.txt` orchestrates: backend/cpp, external/nodeeditor, app/.
+- Qt6 6.4.2 installed via apt (`qt6-base-dev`, `qt6-tools-dev`).
+- QtNodes: `QtNodes::QtNodes` CMake target, USE_QT6=ON, BSD-3-Clause.
+- Backend: standalone-capable CMakeLists.txt, optional OpenCV via `NODDLE_WITH_OPENCV`.
+- Build command: `cmake -B build -DCMAKE_BUILD_TYPE=Debug && cmake --build build`
 
 ## Tooling Updates (2026-04-19)
-- Added root launcher script `start_frontend.sh`.
-- Script targets venv `~/.venv/noddle` by default and supports override via `NODDLE_VENV`.
-- Script syncs frontend requirements then starts `frontend/ryven/app.py`.
+- Git repo initialized with conventional commits.
+- `.gitignore` created (build/, .venv/, IDE, Python cache, Qt generated, compiled objects).
+- Auto-commit hook: `.github/hooks/auto-commit.json` (PostToolUse, counts uncommitted changes).
+- TDD skill: `.github/skills/tdd/SKILL.md` (Catch2 + pytest templates, TDD workflow).
+- Conventions: `.github/instructions/cpp-conventions.instructions.md` (C++20, RAII, naming, OpenCV guards).
+- Conventions: `.github/instructions/qt-frontend-conventions.instructions.md` (Qt6, NodeDelegateModel, signals/slots, file structure).
 
 ## Competitive Research (2026-04-19)
 
