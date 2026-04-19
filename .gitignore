@@ -1,0 +1,40 @@
+# Build
+build/
+cmake-build-*/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.cache/
+compile_commands.json
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.egg-info/
+dist/
+.eggs/
+
+# Virtual env
+.venv/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Qt
+*.pro.user
+moc_*.cpp
+ui_*.h
+qrc_*.cpp
+
+# Compiled
+*.o
+*.so
+*.a
+*.dylib
+*.exe

@@ -1,0 +1,11 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "type": "command",
+        "command": ".github/hooks/scripts/auto-commit-check.sh",
+        "timeout": 10
+      }
+    ]
+  }
+}
