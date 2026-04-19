@@ -38,13 +38,13 @@ public:
         if (!data) {
             setValidationState({QtNodes::NodeValidationState::State::Warning, "Missing input"});
             m_output.reset();
-            Q_EMIT dataUpdated(0);
+            if (!frozen()) Q_EMIT dataUpdated(0);
             return;
         }
         if (!m_input) {
             setValidationState({QtNodes::NodeValidationState::State::Error, "Type mismatch"});
             m_output.reset();
-            Q_EMIT dataUpdated(0);
+            if (!frozen()) Q_EMIT dataUpdated(0);
             return;
         }
         setValidationState({QtNodes::NodeValidationState::State::Valid, ""});
@@ -99,12 +99,22 @@ public:
         return m_widget;
     }
 
+    Q_INVOKABLE void refreshWidgets()
+    {
+        if (m_timeLabel) {
+            double ms = PipelineProfiler::instance().stat(
+                caption(), "process",
+                PipelineProfiler::StatType::Avg, PipelineProfiler::TimeWindow::Sec1);
+            m_timeLabel->setText(QString("%1 ms").arg(ms, 0, 'f', 2));
+        }
+    }
+
 private:
     void process()
     {
         if (!m_input || m_input->image().isNull()) {
             m_output.reset();
-            Q_EMIT dataUpdated(0);
+            if (!frozen()) Q_EMIT dataUpdated(0);
             return;
         }
 
@@ -133,13 +143,10 @@ private:
             m_output = m_input;
 #endif
         }
-        if (m_timeLabel) {
-            double ms = PipelineProfiler::instance().stat(
-                caption(), "process",
-                PipelineProfiler::StatType::Avg, PipelineProfiler::TimeWindow::Sec1);
-            m_timeLabel->setText(QString("%1 ms").arg(ms, 0, 'f', 2));
+        if (!frozen()) {
+            Q_EMIT dataUpdated(0);
+            QMetaObject::invokeMethod(this, "refreshWidgets", Qt::QueuedConnection);
         }
-        Q_EMIT dataUpdated(0);
     }
 
     QWidget *m_widget = nullptr;
