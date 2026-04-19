@@ -67,6 +67,7 @@ You have 9 specialists at your disposal. Delegate to them by name:
 - Keep internal APIs evolvable during early phases; avoid premature ABI freeze.
 
 ## Working Method
+0. **Read `.github/preprompt.md`** at the start of every development task — it contains the full development process checklist.
 1. Clarify objective, constraints, and acceptance criteria.
 2. Propose architecture and milestone roadmap.
 3. Split work into specialist tasks and delegate.

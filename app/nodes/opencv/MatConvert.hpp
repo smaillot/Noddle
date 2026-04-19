@@ -12,7 +12,7 @@ inline cv::Mat qImageToMat(QImage const &img)
     cv::Mat mat(converted.height(), converted.width(), CV_8UC3,
                 const_cast<uchar *>(converted.bits()),
                 static_cast<size_t>(converted.bytesPerLine()));
-    return mat.clone();
+    return mat.clone(); // deep copy — QImage owns the buffer
 }
 
 inline QImage matToQImage(cv::Mat const &mat)
@@ -27,6 +27,6 @@ inline QImage matToQImage(cv::Mat const &mat)
 
     return QImage(rgb.data, rgb.cols, rgb.rows,
                   static_cast<int>(rgb.step), QImage::Format_RGB888)
-        .copy();
+        .copy(); // deep copy — detach from cv::Mat memory
 }
 #endif

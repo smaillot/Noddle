@@ -3,9 +3,11 @@
 #include <QtNodes/NodeDelegateModel>
 #include <QSpinBox>
 #include <QHBoxLayout>
+#include <QVBoxLayout>
 #include <QLabel>
 
 #include "data/ImageData.hpp"
+#include "widgets/PipelineProfiler.hpp"
 
 #ifdef NODDLE_WITH_OPENCV
 #include "nodes/opencv/MatConvert.hpp"
@@ -44,8 +46,10 @@ public:
     {
         if (!m_widget) {
             m_widget = new QWidget();
-            auto *layout = new QHBoxLayout(m_widget);
-            layout->setContentsMargins(4, 4, 4, 4);
+            auto *mainLayout = new QVBoxLayout(m_widget);
+            mainLayout->setContentsMargins(4, 4, 4, 4);
+
+            auto *sizeLayout = new QHBoxLayout();
 
             m_widthSpin = new QSpinBox();
             m_widthSpin->setRange(1, 8192);
@@ -55,10 +59,15 @@ public:
             m_heightSpin->setRange(1, 8192);
             m_heightSpin->setValue(480);
 
-            layout->addWidget(new QLabel("W"));
-            layout->addWidget(m_widthSpin);
-            layout->addWidget(new QLabel("H"));
-            layout->addWidget(m_heightSpin);
+            sizeLayout->addWidget(new QLabel("W"));
+            sizeLayout->addWidget(m_widthSpin);
+            sizeLayout->addWidget(new QLabel("H"));
+            sizeLayout->addWidget(m_heightSpin);
+            mainLayout->addLayout(sizeLayout);
+
+            m_timeLabel = new QLabel("— ms");
+            m_timeLabel->setStyleSheet("color: #aaa; font-size: 10px;");
+            mainLayout->addWidget(m_timeLabel);
 
             connect(m_widthSpin, &QSpinBox::valueChanged, this, [this]() { process(); });
             connect(m_heightSpin, &QSpinBox::valueChanged, this, [this]() { process(); });
@@ -75,21 +84,31 @@ private:
             return;
         }
 
+        {
+            ScopeStageTimer t(caption(), "process");
 #ifdef NODDLE_WITH_OPENCV
-        cv::Mat src = qImageToMat(m_input->image());
-        cv::Mat dst;
-        cv::resize(src, dst, cv::Size(m_widthSpin->value(), m_heightSpin->value()));
-        m_output = std::make_shared<ImageData>(matToQImage(dst));
+            cv::Mat src = qImageToMat(m_input->image());
+            cv::Mat dst;
+            cv::resize(src, dst, cv::Size(m_widthSpin->value(), m_heightSpin->value()));
+            m_output = std::make_shared<ImageData>(matToQImage(dst));
 #else
-        m_output = std::make_shared<ImageData>(
-            m_input->image().scaled(m_widthSpin->value(), m_heightSpin->value()));
+            m_output = std::make_shared<ImageData>(
+                m_input->image().scaled(m_widthSpin->value(), m_heightSpin->value()));
 #endif
+        }
+        if (m_timeLabel) {
+            double ms = PipelineProfiler::instance().stat(
+                caption(), "process",
+                PipelineProfiler::StatType::Avg, PipelineProfiler::TimeWindow::Sec1);
+            m_timeLabel->setText(QString("%1 ms").arg(ms, 0, 'f', 2));
+        }
         Q_EMIT dataUpdated(0);
     }
 
     QWidget *m_widget = nullptr;
     QSpinBox *m_widthSpin = nullptr;
     QSpinBox *m_heightSpin = nullptr;
+    QLabel *m_timeLabel = nullptr;
     std::shared_ptr<ImageData> m_input;
     std::shared_ptr<ImageData> m_output;
 };

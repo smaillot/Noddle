@@ -1,21 +1,31 @@
 #include "NoddleMainWindow.hpp"
+#include "NoddleConnectionPainter.hpp"
 #include "PreviewPanel.hpp"
+#include "TimelineView.hpp"
+#include "widgets/PipelineProfiler.hpp"
+
+#include <QtNodes/internal/NodeGraphicsObject.hpp>
 
 #include <QAction>
 #include <QCloseEvent>
+#include <QCoreApplication>
+#include <QDir>
 #include <QFileDialog>
 #include <QFileInfo>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
+#include <QSettings>
 #include <QStatusBar>
 #include <QUndoStack>
 
 #include "nodes/ImageSourceModel.hpp"
 #include "nodes/CsvSourceModel.hpp"
 #include "nodes/PointCloudSourceModel.hpp"
+#include "nodes/CameraSourceModel.hpp"
 #include "nodes/ImageDisplayModel.hpp"
 
 #ifdef NODDLE_WITH_OPENCV
@@ -39,6 +49,7 @@ NoddleMainWindow::NoddleMainWindow(QWidget *parent)
     m_graphModel = new DataFlowGraphModel(m_registry);
     m_graphModel->setParent(this);
     m_scene = new DataFlowGraphicsScene(*m_graphModel, this);
+    m_scene->setConnectionPainter(std::make_unique<NoddleConnectionPainter>());
     m_graphicsView = new GraphicsView(m_scene);
 
     setCentralWidget(m_graphicsView);
@@ -47,6 +58,46 @@ NoddleMainWindow::NoddleMainWindow(QWidget *parent)
     // Preview panel (right dock)
     m_previewPanel = new PreviewPanel(*m_graphModel, this);
     addDockWidget(Qt::RightDockWidgetArea, m_previewPanel);
+
+    // Timeline panel (bottom dock)
+    m_timelineView = new TimelineView(this);
+    addDockWidget(Qt::BottomDockWidgetArea, m_timelineView);
+
+    // When a dock floats, promote it to a top-level window so it can be
+    // moved to another screen. Re-docking restores default dock flags.
+    auto enableDetach = [this](QDockWidget *dock, Qt::DockWidgetArea area) {
+        QObject::connect(dock, &QDockWidget::topLevelChanged, dock, [this, dock, area](bool floating) {
+            if (floating) {
+                dock->setWindowFlags(Qt::Window | Qt::CustomizeWindowHint
+                                     | Qt::WindowTitleHint | Qt::WindowCloseButtonHint
+                                     | Qt::WindowMinMaxButtonsHint);
+                dock->show();
+            } else {
+                // Restore default dock widget flags when re-docked
+                dock->setWindowFlags(Qt::Widget);
+                addDockWidget(area, dock);
+                dock->show();
+            }
+        });
+    };
+    enableDetach(m_previewPanel, Qt::RightDockWidgetArea);
+    enableDetach(m_timelineView, Qt::BottomDockWidgetArea);
+
+    // Status bar pipeline time (refresh at 5 Hz)
+    m_pipelineTimeLabel = new QLabel("Pipeline: — ms");
+    m_pipelineTimeLabel->setStyleSheet("color: #aaa; margin-right: 8px;");
+    statusBar()->addPermanentWidget(m_pipelineTimeLabel);
+
+    m_statusTimer = new QTimer(this);
+    m_statusTimer->setInterval(200);
+    connect(m_statusTimer, &QTimer::timeout, this, [this]() {
+        double ms = PipelineProfiler::instance().totalPipelineMs(
+            PipelineProfiler::StatType::Avg, PipelineProfiler::TimeWindow::Sec1);
+        double fps = (ms > 0.01) ? 1000.0 / ms : 0.0;
+        m_pipelineTimeLabel->setText(
+            QString("Pipeline: %1 ms (%2 fps)").arg(ms, 0, 'f', 2).arg(fps, 0, 'f', 1));
+    });
+    m_statusTimer->start();
 
     connect(m_scene, &DataFlowGraphicsScene::nodeSelected,
             m_previewPanel, &PreviewPanel::onNodeSelected);
@@ -89,6 +140,11 @@ void NoddleMainWindow::setupMenus()
 
     fileMenu->addSeparator();
 
+    m_recentMenu = fileMenu->addMenu(tr("Recent &Pipelines"));
+    updateRecentFilesMenu();
+
+    fileMenu->addSeparator();
+
     auto *quitAct = fileMenu->addAction(tr("&Quit"), this, &QWidget::close);
     quitAct->setShortcut(QKeySequence::Quit);
 
@@ -105,6 +161,23 @@ void NoddleMainWindow::setupMenus()
     auto *togglePreview = m_previewPanel->toggleViewAction();
     togglePreview->setText(tr("Preview Panel"));
     viewMenu->addAction(togglePreview);
+
+    auto *toggleTimeline = m_timelineView->toggleViewAction();
+    toggleTimeline->setText(tr("Pipeline Timeline"));
+    viewMenu->addAction(toggleTimeline);
+
+    viewMenu->addSeparator();
+
+    auto *redockAll = viewMenu->addAction(tr("Re-dock All Panels"), this, [this]() {
+        auto redock = [](QDockWidget *dock) {
+            if (dock->isFloating()) {
+                dock->setFloating(false);
+            }
+        };
+        redock(m_previewPanel);
+        redock(m_timelineView);
+    });
+    redockAll->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
 }
 
 void NoddleMainWindow::setupStatusBar()
@@ -122,6 +195,7 @@ std::shared_ptr<NodeDelegateModelRegistry> NoddleMainWindow::createRegistry()
     registry->registerModel<ImageSourceModel>("Sources");
     registry->registerModel<CsvSourceModel>("Sources");
     registry->registerModel<PointCloudSourceModel>("Sources");
+    registry->registerModel<CameraSourceModel>("Sources");
 
     // Display nodes
     registry->registerModel<ImageDisplayModel>("Display");
@@ -174,11 +248,8 @@ void NoddleMainWindow::onNewFile()
     if (!maybeSave())
         return;
 
-    // Clear the graph by reloading an empty JSON object
-    QJsonObject empty;
-    empty["nodes"] = QJsonArray();
-    empty["connections"] = QJsonArray();
-    m_graphModel->load(empty);
+    m_scene->clearScene();
+    m_scene->undoStack().clear();
 
     m_currentFilePath.clear();
     m_modified = false;
@@ -192,8 +263,8 @@ void NoddleMainWindow::onOpenFile()
         return;
 
     QString filePath = QFileDialog::getOpenFileName(
-        this, tr("Open Pipeline"), QString(),
-        tr("Noddle Pipeline (*.noddle);;All Files (*)"));
+        this, tr("Open Pipeline"), pipelinesDir(),
+        tr("Noddle Pipeline (*.ndl *.noddle);;All Files (*)"));
 
     if (filePath.isEmpty())
         return;
@@ -213,8 +284,8 @@ void NoddleMainWindow::onSaveFile()
 void NoddleMainWindow::onSaveFileAs()
 {
     QString filePath = QFileDialog::getSaveFileName(
-        this, tr("Save Pipeline"), QString(),
-        tr("Noddle Pipeline (*.noddle);;All Files (*)"));
+        this, tr("Save Pipeline"), pipelinesDir(),
+        tr("Noddle Pipeline (*.ndl);;All Files (*)"));
 
     if (filePath.isEmpty())
         return;
@@ -244,31 +315,163 @@ void NoddleMainWindow::loadFromFile(QString const &filePath)
         return;
     }
 
+    // Clear existing graph using scene's official method
+    m_scene->clearScene();
+
     m_graphModel->load(doc.object());
+
+    // Reset undo stack so undo doesn't replay deletions
+    m_scene->undoStack().clear();
+
     m_currentFilePath = filePath;
     m_modified = false;
     updateWindowTitle();
+    addRecentFile(filePath);
 
     int nodeCount = static_cast<int>(m_graphModel->allNodeIds().size());
     statusBar()->showMessage(
         tr("Loaded — %1 nodes").arg(nodeCount), 3000);
+
+    // Restore the view transform if saved, otherwise fit to scene
+    QJsonObject root = doc.object();
+    if (root.contains("viewTransform")) {
+        QJsonObject vt = root["viewTransform"].toObject();
+        double scale = vt["scale"].toDouble(1.0);
+        double cx = vt["centerX"].toDouble(0.0);
+        double cy = vt["centerY"].toDouble(0.0);
+        m_graphicsView->resetTransform();
+        m_graphicsView->scale(scale, scale);
+        m_graphicsView->centerOn(cx, cy);
+    } else {
+        m_graphicsView->centerScene();
+    }
 }
 
 void NoddleMainWindow::saveToFile(QString const &filePath)
 {
-    QFile file(filePath);
+    QString actualPath = filePath;
+    if (QFileInfo(actualPath).suffix().isEmpty()) {
+        actualPath += ".ndl";
+    }
+
+    QFile file(actualPath);
     if (!file.open(QIODevice::WriteOnly)) {
         QMessageBox::critical(this, tr("Error"),
-                              tr("Cannot write file:\n%1").arg(filePath));
+                              tr("Cannot write file:\n%1").arg(actualPath));
         return;
     }
 
     QJsonObject json = m_graphModel->save();
+
+    // Workaround: QtNodes may not sync dragged QGraphicsObject positions
+    // back to the model data. Read positions from the scene objects and
+    // patch the JSON array so saved files reflect actual node placement.
+    {
+        QJsonArray nodesArray = json["nodes"].toArray();
+        for (int i = 0; i < nodesArray.size(); ++i) {
+            QJsonObject nodeJson = nodesArray[i].toObject();
+            QtNodes::NodeId nid = static_cast<QtNodes::NodeId>(nodeJson["id"].toInt());
+            if (auto *ngo = m_scene->nodeGraphicsObject(nid)) {
+                QPointF pos = ngo->pos();
+                QJsonObject posJson;
+                posJson["x"] = pos.x();
+                posJson["y"] = pos.y();
+                nodeJson["position"] = posJson;
+                nodesArray[i] = nodeJson;
+            }
+        }
+        json["nodes"] = nodesArray;
+    }
+
+    // Save view transform (scale + center)
+    QTransform t = m_graphicsView->transform();
+    QPointF viewCenter = m_graphicsView->mapToScene(
+        m_graphicsView->viewport()->rect().center());
+    QJsonObject vt;
+    vt["scale"] = t.m11();
+    vt["centerX"] = viewCenter.x();
+    vt["centerY"] = viewCenter.y();
+    json["viewTransform"] = vt;
+
     QJsonDocument doc(json);
     file.write(doc.toJson());
 
-    m_currentFilePath = filePath;
+    m_currentFilePath = actualPath;
     m_modified = false;
     updateWindowTitle();
+    addRecentFile(actualPath);
     statusBar()->showMessage(tr("Saved"), 3000);
+}
+
+QString NoddleMainWindow::pipelinesDir() const
+{
+    if (!m_currentFilePath.isEmpty())
+        return QFileInfo(m_currentFilePath).absolutePath();
+
+    // Default to pipelines/ in the project source tree (set at compile time)
+    QString dir = QStringLiteral(NODDLE_SOURCE_DIR "/pipelines");
+    QDir().mkpath(dir);
+    return dir;
+}
+
+void NoddleMainWindow::addRecentFile(QString const &filePath)
+{
+    QSettings settings("Noddle", "Noddle");
+    QStringList files = settings.value("recentFiles").toStringList();
+    files.removeAll(filePath);
+    files.prepend(filePath);
+    while (files.size() > kMaxRecentFiles)
+        files.removeLast();
+    settings.setValue("recentFiles", files);
+    updateRecentFilesMenu();
+}
+
+void NoddleMainWindow::updateRecentFilesMenu()
+{
+    if (!m_recentMenu)
+        return;
+
+    m_recentMenu->clear();
+
+    QSettings settings("Noddle", "Noddle");
+    QStringList files = settings.value("recentFiles").toStringList();
+
+    if (files.isEmpty()) {
+        m_recentMenu->addAction(tr("(empty)"))->setEnabled(false);
+        return;
+    }
+
+    for (auto const &path : files) {
+        QFileInfo fi(path);
+        auto *act = m_recentMenu->addAction(fi.fileName());
+        act->setData(path);
+        act->setToolTip(path);
+        connect(act, &QAction::triggered, this, &NoddleMainWindow::onOpenRecent);
+    }
+
+    m_recentMenu->addSeparator();
+    m_recentMenu->addAction(tr("Clear"), this, [this]() {
+        QSettings s("Noddle", "Noddle");
+        s.remove("recentFiles");
+        updateRecentFilesMenu();
+    });
+}
+
+void NoddleMainWindow::onOpenRecent()
+{
+    auto *act = qobject_cast<QAction *>(sender());
+    if (!act)
+        return;
+
+    QString filePath = act->data().toString();
+    if (filePath.isEmpty() || !QFile::exists(filePath)) {
+        QMessageBox::warning(this, tr("Error"),
+                             tr("File not found:\n%1").arg(filePath));
+        return;
+    }
+
+    if (!maybeSave())
+        return;
+
+    loadFromFile(filePath);
 }
