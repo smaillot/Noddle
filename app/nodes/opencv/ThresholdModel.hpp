@@ -7,6 +7,7 @@
 #include <QLabel>
 
 #include "data/ImageData.hpp"
+#include "widgets/PipelineProfiler.hpp"
 
 #ifdef NODDLE_WITH_OPENCV
 #include "nodes/opencv/MatConvert.hpp"
@@ -59,6 +60,10 @@ public:
             layout->addWidget(m_threshSpin);
             layout->addWidget(m_typeCombo);
 
+            m_timeLabel = new QLabel("— ms");
+            m_timeLabel->setStyleSheet("color: #aaa; font-size: 10px;");
+            layout->addWidget(m_timeLabel);
+
             connect(m_threshSpin, &QSpinBox::valueChanged, this, [this]() { process(); });
             connect(m_typeCombo, &QComboBox::currentIndexChanged, this, [this]() { process(); });
         }
@@ -74,34 +79,44 @@ private:
             return;
         }
 
+        {
+            ScopeStageTimer t(caption(), "process");
 #ifdef NODDLE_WITH_OPENCV
-        cv::Mat src = qImageToMat(m_input->image());
-        cv::Mat gray;
-        if (src.channels() == 3)
-            cv::cvtColor(src, gray, cv::COLOR_RGB2GRAY);
-        else
-            gray = src;
+            cv::Mat src = qImageToMat(m_input->image());
+            cv::Mat gray;
+            if (src.channels() == 3)
+                cv::cvtColor(src, gray, cv::COLOR_RGB2GRAY);
+            else
+                gray = src;
 
-        cv::Mat dst;
-        int type = cv::THRESH_BINARY;
-        if (m_typeCombo) {
-            switch (m_typeCombo->currentIndex()) {
-            case 0: type = cv::THRESH_BINARY; break;
-            case 1: type = cv::THRESH_BINARY_INV; break;
-            case 2: type = cv::THRESH_BINARY | cv::THRESH_OTSU; break;
+            cv::Mat dst;
+            int type = cv::THRESH_BINARY;
+            if (m_typeCombo) {
+                switch (m_typeCombo->currentIndex()) {
+                case 0: type = cv::THRESH_BINARY; break;
+                case 1: type = cv::THRESH_BINARY_INV; break;
+                case 2: type = cv::THRESH_BINARY | cv::THRESH_OTSU; break;
+                }
             }
-        }
-        cv::threshold(gray, dst, m_threshSpin->value(), 255, type);
-        m_output = std::make_shared<ImageData>(matToQImage(dst));
+            cv::threshold(gray, dst, m_threshSpin->value(), 255, type);
+            m_output = std::make_shared<ImageData>(matToQImage(dst));
 #else
-        m_output = m_input;
+            m_output = m_input;
 #endif
+        }
+        if (m_timeLabel) {
+            double ms = PipelineProfiler::instance().stat(
+                caption(), "process",
+                PipelineProfiler::StatType::Avg, PipelineProfiler::TimeWindow::Sec1);
+            m_timeLabel->setText(QString("%1 ms").arg(ms, 0, 'f', 2));
+        }
         Q_EMIT dataUpdated(0);
     }
 
     QWidget *m_widget = nullptr;
     QSpinBox *m_threshSpin = nullptr;
     QComboBox *m_typeCombo = nullptr;
+    QLabel *m_timeLabel = nullptr;
     std::shared_ptr<ImageData> m_input;
     std::shared_ptr<ImageData> m_output;
 };

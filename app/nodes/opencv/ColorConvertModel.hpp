@@ -2,8 +2,11 @@
 
 #include <QtNodes/NodeDelegateModel>
 #include <QComboBox>
+#include <QVBoxLayout>
+#include <QLabel>
 
 #include "data/ImageData.hpp"
+#include "widgets/PipelineProfiler.hpp"
 
 #ifdef NODDLE_WITH_OPENCV
 #include "nodes/opencv/MatConvert.hpp"
@@ -40,12 +43,22 @@ public:
 
     QWidget *embeddedWidget() override
     {
-        if (!m_combo) {
+        if (!m_widget) {
+            m_widget = new QWidget();
+            auto *layout = new QVBoxLayout(m_widget);
+            layout->setContentsMargins(4, 4, 4, 4);
+
             m_combo = new QComboBox();
             m_combo->addItems({"Grayscale", "HSV", "Lab"});
+            layout->addWidget(m_combo);
+
+            m_timeLabel = new QLabel("— ms");
+            m_timeLabel->setStyleSheet("color: #aaa; font-size: 10px;");
+            layout->addWidget(m_timeLabel);
+
             connect(m_combo, &QComboBox::currentIndexChanged, this, [this]() { process(); });
         }
-        return m_combo;
+        return m_widget;
     }
 
 private:
@@ -57,26 +70,37 @@ private:
             return;
         }
 
+        {
+            ScopeStageTimer t(caption(), "process");
 #ifdef NODDLE_WITH_OPENCV
-        cv::Mat src = qImageToMat(m_input->image());
-        cv::Mat dst;
-        int code = cv::COLOR_RGB2GRAY;
-        if (m_combo) {
-            switch (m_combo->currentIndex()) {
-            case 0: code = cv::COLOR_RGB2GRAY; break;
-            case 1: code = cv::COLOR_RGB2HSV; break;
-            case 2: code = cv::COLOR_RGB2Lab; break;
+            cv::Mat src = qImageToMat(m_input->image());
+            cv::Mat dst;
+            int code = cv::COLOR_RGB2GRAY;
+            if (m_combo) {
+                switch (m_combo->currentIndex()) {
+                case 0: code = cv::COLOR_RGB2GRAY; break;
+                case 1: code = cv::COLOR_RGB2HSV; break;
+                case 2: code = cv::COLOR_RGB2Lab; break;
+                }
             }
-        }
-        cv::cvtColor(src, dst, code);
-        m_output = std::make_shared<ImageData>(matToQImage(dst));
+            cv::cvtColor(src, dst, code);
+            m_output = std::make_shared<ImageData>(matToQImage(dst));
 #else
-        m_output = m_input;
+            m_output = m_input;
 #endif
+        }
+        if (m_timeLabel) {
+            double ms = PipelineProfiler::instance().stat(
+                caption(), "process",
+                PipelineProfiler::StatType::Avg, PipelineProfiler::TimeWindow::Sec1);
+            m_timeLabel->setText(QString("%1 ms").arg(ms, 0, 'f', 2));
+        }
         Q_EMIT dataUpdated(0);
     }
 
+    QWidget *m_widget = nullptr;
     QComboBox *m_combo = nullptr;
+    QLabel *m_timeLabel = nullptr;
     std::shared_ptr<ImageData> m_input;
     std::shared_ptr<ImageData> m_output;
 };

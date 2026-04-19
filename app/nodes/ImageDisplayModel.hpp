@@ -5,6 +5,7 @@
 #include <QVBoxLayout>
 
 #include "data/ImageData.hpp"
+#include "widgets/PipelineProfiler.hpp"
 
 class ImageDisplayModel : public QtNodes::NodeDelegateModel
 {
@@ -30,15 +31,31 @@ public:
     {
         m_receivedData = std::dynamic_pointer_cast<ImageData>(data);
 
+        // Ensure widget is created
+        embeddedWidget();
+
         if (m_receivedData && !m_receivedData->image().isNull()) {
-            m_preview->setPixmap(QPixmap::fromImage(
-                m_receivedData->image().scaled(200, 150, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+            {
+                ScopeStageTimer t(caption(), "display");
+                QImage scaled = m_receivedData->image().scaled(
+                    200, 150, Qt::KeepAspectRatio, Qt::FastTransformation);
+                m_preview->setPixmap(QPixmap::fromImage(scaled));
+            }
+            if (m_timeLabel) {
+                double ms = PipelineProfiler::instance().stat(
+                    caption(), "display",
+                    PipelineProfiler::StatType::Avg, PipelineProfiler::TimeWindow::Sec1);
+                m_timeLabel->setText(QString("%1 ms").arg(ms, 0, 'f', 2));
+            }
         } else {
             m_receivedData.reset();
-            m_preview->setText("No image");
+            if (m_preview)
+                m_preview->setText("No image");
         }
     }
 
+    // Return received data so PreviewPanel can display sink nodes
+    // (no output ports, but outData(0) exposes the last input)
     std::shared_ptr<QtNodes::NodeData> outData(QtNodes::PortIndex) override
     {
         return m_receivedData;
@@ -52,11 +69,16 @@ public:
             layout->setContentsMargins(4, 4, 4, 4);
 
             m_preview = new QLabel("No image");
+            m_preview->setObjectName("nodePreview");
             m_preview->setFixedSize(200, 150);
             m_preview->setAlignment(Qt::AlignCenter);
             m_preview->setStyleSheet("border: 1px solid #555; background: #222;");
 
             layout->addWidget(m_preview);
+
+            m_timeLabel = new QLabel("— ms");
+            m_timeLabel->setStyleSheet("color: #aaa; font-size: 10px;");
+            layout->addWidget(m_timeLabel);
         }
         return m_widget;
     }
@@ -64,5 +86,6 @@ public:
 private:
     QWidget *m_widget = nullptr;
     QLabel *m_preview = nullptr;
+    QLabel *m_timeLabel = nullptr;
     std::shared_ptr<ImageData> m_receivedData;
 };

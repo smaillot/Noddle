@@ -7,6 +7,7 @@
 #include <QLabel>
 
 #include "data/ImageData.hpp"
+#include "widgets/PipelineProfiler.hpp"
 
 #ifdef NODDLE_WITH_OPENCV
 #include "nodes/opencv/MatConvert.hpp"
@@ -61,6 +62,10 @@ public:
             layout->addWidget(new QLabel("Kernel"));
             layout->addWidget(m_kernelSpin);
 
+            m_timeLabel = new QLabel("— ms");
+            m_timeLabel->setStyleSheet("color: #aaa; font-size: 10px;");
+            layout->addWidget(m_timeLabel);
+
             connect(m_opCombo, &QComboBox::currentIndexChanged, this, [this]() { process(); });
             connect(m_kernelSpin, &QSpinBox::valueChanged, this, [this]() { process(); });
         }
@@ -76,30 +81,40 @@ private:
             return;
         }
 
+        {
+            ScopeStageTimer t(caption(), "process");
 #ifdef NODDLE_WITH_OPENCV
-        cv::Mat src = qImageToMat(m_input->image());
-        int k = m_kernelSpin->value() | 1;
-        cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(k, k));
-        cv::Mat dst;
+            cv::Mat src = qImageToMat(m_input->image());
+            int k = m_kernelSpin->value() | 1;
+            cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(k, k));
+            cv::Mat dst;
 
-        switch (m_opCombo->currentIndex()) {
-        case 0: cv::erode(src, dst, kernel); break;
-        case 1: cv::dilate(src, dst, kernel); break;
-        case 2: cv::morphologyEx(src, dst, cv::MORPH_OPEN, kernel); break;
-        case 3: cv::morphologyEx(src, dst, cv::MORPH_CLOSE, kernel); break;
-        default: dst = src; break;
-        }
+            switch (m_opCombo->currentIndex()) {
+            case 0: cv::erode(src, dst, kernel); break;
+            case 1: cv::dilate(src, dst, kernel); break;
+            case 2: cv::morphologyEx(src, dst, cv::MORPH_OPEN, kernel); break;
+            case 3: cv::morphologyEx(src, dst, cv::MORPH_CLOSE, kernel); break;
+            default: dst = src; break;
+            }
 
-        m_output = std::make_shared<ImageData>(matToQImage(dst));
+            m_output = std::make_shared<ImageData>(matToQImage(dst));
 #else
-        m_output = m_input;
+            m_output = m_input;
 #endif
+        }
+        if (m_timeLabel) {
+            double ms = PipelineProfiler::instance().stat(
+                caption(), "process",
+                PipelineProfiler::StatType::Avg, PipelineProfiler::TimeWindow::Sec1);
+            m_timeLabel->setText(QString("%1 ms").arg(ms, 0, 'f', 2));
+        }
         Q_EMIT dataUpdated(0);
     }
 
     QWidget *m_widget = nullptr;
     QComboBox *m_opCombo = nullptr;
     QSpinBox *m_kernelSpin = nullptr;
+    QLabel *m_timeLabel = nullptr;
     std::shared_ptr<ImageData> m_input;
     std::shared_ptr<ImageData> m_output;
 };
