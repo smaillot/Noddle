@@ -246,6 +246,12 @@ void NoddleMainWindow::loadFromFile(QString const &filePath)
         return;
     }
 
+    // Clear existing graph before loading
+    auto nodeIds = m_graphModel->allNodeIds();
+    for (auto id : nodeIds) {
+        m_graphModel->deleteNode(id);
+    }
+
     m_graphModel->load(doc.object());
     m_currentFilePath = filePath;
     m_modified = false;
@@ -258,10 +264,15 @@ void NoddleMainWindow::loadFromFile(QString const &filePath)
 
 void NoddleMainWindow::saveToFile(QString const &filePath)
 {
-    QFile file(filePath);
+    QString actualPath = filePath;
+    if (!actualPath.contains('.')) {
+        actualPath += ".noddle";
+    }
+
+    QFile file(actualPath);
     if (!file.open(QIODevice::WriteOnly)) {
         QMessageBox::critical(this, tr("Error"),
-                              tr("Cannot write file:\n%1").arg(filePath));
+                              tr("Cannot write file:\n%1").arg(actualPath));
         return;
     }
 
@@ -269,7 +280,7 @@ void NoddleMainWindow::saveToFile(QString const &filePath)
     QJsonDocument doc(json);
     file.write(doc.toJson());
 
-    m_currentFilePath = filePath;
+    m_currentFilePath = actualPath;
     m_modified = false;
     updateWindowTitle();
     statusBar()->showMessage(tr("Saved"), 3000);

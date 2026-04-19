@@ -119,7 +119,7 @@ void PreviewPanel::refreshPreview()
         m_fpsCounter.tick();
         QPixmap pixmap = QPixmap::fromImage(image);
         m_previewLabel->setPixmap(
-            pixmap.scaled(m_previewLabel->size(), Qt::KeepAspectRatio, Qt::SmoothTransformation));
+            pixmap.scaled(m_previewLabel->size(), Qt::KeepAspectRatio, Qt::FastTransformation));
     } else {
         m_previewLabel->setText("No preview available");
     }

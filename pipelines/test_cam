@@ -1,0 +1,36 @@
+{
+    "connections": [
+        {
+            "inNodeId": 0,
+            "inPortIndex": 0,
+            "outNodeId": 1,
+            "outPortIndex": 0
+        }
+    ],
+    "nodes": [
+        {
+            "id": 0,
+            "internal-data": {
+                "model-name": "ImageDisplay"
+            },
+            "label": "",
+            "labelVisible": true,
+            "position": {
+                "x": -12,
+                "y": 13
+            }
+        },
+        {
+            "id": 1,
+            "internal-data": {
+                "model-name": "CameraSource"
+            },
+            "label": "",
+            "labelVisible": true,
+            "position": {
+                "x": -79,
+                "y": 34
+            }
+        }
+    ]
+}

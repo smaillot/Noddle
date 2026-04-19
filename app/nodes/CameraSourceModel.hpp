@@ -53,7 +53,6 @@ private:
 
     // Frame rate limiting
     QElapsedTimer m_frameThrottle;
-    static constexpr int kMinFrameIntervalMs = 33; // ~30fps
 
     // FPS tracking
     FpsCounter m_fpsCounter;

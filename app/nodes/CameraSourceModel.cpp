@@ -90,17 +90,26 @@ void CameraSourceModel::onCameraDeviceChanged(int index)
 void CameraSourceModel::onVideoFrameChanged(const QVideoFrame &frame)
 {
     // Frame rate limiting
+    static constexpr int kMinFrameIntervalMs = 33; // ~30fps
     if (m_frameThrottle.isValid()
         && m_frameThrottle.elapsed() < kMinFrameIntervalMs) {
         return;
     }
     m_frameThrottle.restart();
 
-    QImage img = frame.toImage();
+    QVideoFrame mutableFrame(frame);
+    mutableFrame.map(QVideoFrame::ReadOnly);
+    QImage img = mutableFrame.toImage();
+    mutableFrame.unmap();
     if (img.isNull())
         return;
 
-    // Ensure format is usable for display
+    // Downscale early to reduce memory bandwidth in downstream nodes
+    if (img.width() > 640) {
+        img = img.scaled(640, 480, Qt::KeepAspectRatio, Qt::FastTransformation);
+    }
+
+    // Ensure usable format (avoid costly per-pixel conversion downstream)
     if (img.format() != QImage::Format_RGB32
         && img.format() != QImage::Format_ARGB32) {
         img = img.convertToFormat(QImage::Format_RGB32);
