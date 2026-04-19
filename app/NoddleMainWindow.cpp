@@ -95,17 +95,15 @@ void NoddleMainWindow::setupMenus()
     // --- Edit menu ---
     auto *editMenu = menuBar()->addMenu(tr("&Edit"));
 
-    auto *undoAct = editMenu->addAction(tr("&Undo"));
+    auto *undoAct = m_scene->undoStack().createUndoAction(this, tr("&Undo"));
     undoAct->setShortcut(QKeySequence::Undo);
-    connect(undoAct, &QAction::triggered, this, [this]() {
-        m_scene->undoStack().undo();
-    });
+    undoAct->setShortcutContext(Qt::ApplicationShortcut);
+    editMenu->addAction(undoAct);
 
-    auto *redoAct = editMenu->addAction(tr("&Redo"));
-    redoAct->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_Z));
-    connect(redoAct, &QAction::triggered, this, [this]() {
-        m_scene->undoStack().redo();
-    });
+    auto *redoAct = m_scene->undoStack().createRedoAction(this, tr("&Redo"));
+    redoAct->setShortcut(QKeySequence::Redo);
+    redoAct->setShortcutContext(Qt::ApplicationShortcut);
+    editMenu->addAction(redoAct);
 
     // --- View menu ---
     auto *viewMenu = menuBar()->addMenu(tr("&View"));
