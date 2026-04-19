@@ -1,6 +1,9 @@
 #include "nodes/CameraSourceModel.hpp"
 
 #include <QVideoFrame>
+#include <QtConcurrent/QtConcurrent>
+
+#include "widgets/PipelineProfiler.hpp"
 
 CameraSourceModel::CameraSourceModel()
 {
@@ -51,7 +54,14 @@ QWidget *CameraSourceModel::embeddedWidget()
                 this, &CameraSourceModel::onCameraDeviceChanged);
         layout->addWidget(m_cameraCombo);
 
+        m_formatCombo = new QComboBox();
+        m_formatCombo->setEnabled(!m_cameras.isEmpty());
+        m_formatCombo->setStyleSheet("font-size: 10px;");
+        layout->addWidget(m_formatCombo);
+        populateFormatList();
+
         m_preview = new QLabel("No feed");
+        m_preview->setObjectName("nodePreview");
         m_preview->setFixedSize(120, 90);
         m_preview->setAlignment(Qt::AlignCenter);
         m_preview->setStyleSheet("border: 1px solid #555; background: #222;");
@@ -80,57 +90,101 @@ void CameraSourceModel::onToggleCamera()
 
 void CameraSourceModel::onCameraDeviceChanged(int index)
 {
+    Q_UNUSED(index);
+    populateFormatList();
     if (m_running) {
         stopCamera();
         startCamera();
     }
+}
+
+void CameraSourceModel::onFormatChanged(int index)
+{
     Q_UNUSED(index);
+    if (m_running) {
+        stopCamera();
+        startCamera();
+    }
 }
 
 void CameraSourceModel::onVideoFrameChanged(const QVideoFrame &frame)
 {
-    // Frame rate limiting
-    static constexpr int kMinFrameIntervalMs = 33; // ~30fps
-    if (m_frameThrottle.isValid()
-        && m_frameThrottle.elapsed() < kMinFrameIntervalMs) {
+    // Skip if still processing previous frame
+    if (m_processing.exchange(true))
         return;
-    }
-    m_frameThrottle.restart();
 
     QVideoFrame mutableFrame(frame);
-    mutableFrame.map(QVideoFrame::ReadOnly);
-    QImage img = mutableFrame.toImage();
-    mutableFrame.unmap();
-    if (img.isNull())
-        return;
 
-    // Downscale early to reduce memory bandwidth in downstream nodes
-    if (img.width() > 640) {
-        img = img.scaled(640, 480, Qt::KeepAspectRatio, Qt::FastTransformation);
-    }
+    // Offload heavy GPU->CPU readback + format conversion to thread pool
+    m_processingFuture = QtConcurrent::run([this, mutableFrame]() mutable {
+        QElapsedTimer decodeTimer;
+        decodeTimer.start();
 
-    // Ensure usable format (avoid costly per-pixel conversion downstream)
-    if (img.format() != QImage::Format_RGB32
-        && img.format() != QImage::Format_ARGB32) {
-        img = img.convertToFormat(QImage::Format_RGB32);
-    }
+        if (!mutableFrame.map(QVideoFrame::ReadOnly)) {
+            m_processing.store(false);
+            return;
+        }
+        QImage img = mutableFrame.toImage();
+        mutableFrame.unmap();
 
-    m_fpsCounter.tick();
+        double decodeMs = decodeTimer.nsecsElapsed() / 1.0e6;
+        PipelineProfiler::instance().record("Camera Source", "decode", decodeMs);
 
-    m_imageData = std::make_shared<ImageData>(img);
+        if (img.isNull()) {
+            m_processing.store(false);
+            return;
+        }
 
-    if (m_preview) {
-        m_preview->setPixmap(QPixmap::fromImage(
-            img.scaled(120, 90, Qt::KeepAspectRatio, Qt::FastTransformation)));
-    }
+        // Ensure usable format
+        QElapsedTimer convertTimer;
+        convertTimer.start();
+        if (img.format() != QImage::Format_RGB32
+            && img.format() != QImage::Format_ARGB32) {
+            img = img.convertToFormat(QImage::Format_RGB32);
+        }
+        double convertMs = convertTimer.nsecsElapsed() / 1.0e6;
+        PipelineProfiler::instance().record("Camera Source", "convert", convertMs);
 
-    Q_EMIT dataUpdated(0);
+        // Release the frame-skip gate BEFORE posting to UI thread.
+        // This decouples processing throughput from UI update latency:
+        // the next camera frame can begin processing while the UI
+        // thread is still rendering the previous result.
+        m_processing.store(false);
+
+        // Post result back to UI thread
+        QMetaObject::invokeMethod(this, [this, img = std::move(img)]() {
+            m_lastResolution = img.size();
+            m_fpsCounter.tick();
+
+            PipelineProfiler::instance().markFrame("Camera Source");
+
+            m_imageData = std::make_shared<ImageData>(img);
+
+            {
+                ScopeStageTimer t("Camera Source", "preview");
+                if (m_preview) {
+                    m_preview->setPixmap(QPixmap::fromImage(
+                        img.scaled(120, 90, Qt::KeepAspectRatio, Qt::FastTransformation)));
+                }
+            }
+
+            Q_EMIT dataUpdated(0);
+        });
+    });
 }
 
 void CameraSourceModel::onUpdateFpsLabel()
 {
-    if (m_fpsLabel)
-        m_fpsLabel->setText(QString("FPS: %1").arg(m_fpsCounter.fps(), 0, 'f', 1));
+    if (m_fpsLabel) {
+        if (m_lastResolution.isValid()) {
+            m_fpsLabel->setText(QString("%1x%2 @ %3 fps")
+                                    .arg(m_lastResolution.width())
+                                    .arg(m_lastResolution.height())
+                                    .arg(m_fpsCounter.fps(), 0, 'f', 1));
+        } else {
+            m_fpsLabel->setText(QString("FPS: %1").arg(m_fpsCounter.fps(), 0, 'f', 1));
+        }
+    }
 }
 
 void CameraSourceModel::startCamera()
@@ -149,20 +203,32 @@ void CameraSourceModel::startCamera()
     m_camera = new QCamera(m_cameras[idx], this);
     m_captureSession->setCamera(m_camera);
 
+    // Apply selected format (resolution + FPS)
+    int fmtIdx = m_formatCombo ? m_formatCombo->currentIndex() : -1;
+    if (fmtIdx >= 0 && fmtIdx < m_formats.size()) {
+        m_camera->setCameraFormat(m_formats[fmtIdx]);
+    }
+
     m_camera->start();
     m_running = true;
-    m_frameThrottle.start();
     m_fpsTimer->start();
 
     if (m_toggleButton)
         m_toggleButton->setText("Stop");
     if (m_cameraCombo)
         m_cameraCombo->setEnabled(false);
+    if (m_formatCombo)
+        m_formatCombo->setEnabled(false);
 }
 
 void CameraSourceModel::stopCamera()
 {
     m_fpsTimer->stop();
+
+    // CRITICAL: wait for in-flight thread pool task before destroying
+    // camera objects — prevents use-after-free on captured `this`
+    if (m_processingFuture.isRunning())
+        m_processingFuture.waitForFinished();
 
     if (m_camera) {
         m_camera->stop();
@@ -180,6 +246,8 @@ void CameraSourceModel::stopCamera()
         m_toggleButton->setText("Start");
     if (m_cameraCombo)
         m_cameraCombo->setEnabled(!m_cameras.isEmpty());
+    if (m_formatCombo)
+        m_formatCombo->setEnabled(!m_cameras.isEmpty());
     if (m_fpsLabel)
         m_fpsLabel->setText("FPS: —");
     if (m_preview)
@@ -189,4 +257,48 @@ void CameraSourceModel::stopCamera()
 void CameraSourceModel::populateCameraList()
 {
     m_cameras = QMediaDevices::videoInputs();
+}
+
+void CameraSourceModel::populateFormatList()
+{
+    if (!m_formatCombo)
+        return;
+
+    m_formatCombo->blockSignals(true);
+    m_formatCombo->clear();
+    m_formats.clear();
+
+    int idx = m_cameraCombo ? m_cameraCombo->currentIndex() : 0;
+    if (idx < 0 || idx >= m_cameras.size()) {
+        m_formatCombo->addItem("—");
+        m_formatCombo->blockSignals(false);
+        return;
+    }
+
+    auto const &camFormats = m_cameras[idx].videoFormats();
+    int bestIdx = 0;
+    for (int i = 0; i < camFormats.size(); ++i) {
+        auto const &f = camFormats[i];
+        auto res = f.resolution();
+        QString label = QString("%1x%2 @ %3 fps")
+                            .arg(res.width())
+                            .arg(res.height())
+                            .arg(f.maxFrameRate(), 0, 'f', 0);
+        m_formatCombo->addItem(label);
+        m_formats.append(f);
+
+        // Prefer 640x480 @ highest fps as default
+        if (res.width() == 640 && res.height() == 480)
+            bestIdx = i;
+    }
+
+    if (m_formats.isEmpty())
+        m_formatCombo->addItem("—");
+    else
+        m_formatCombo->setCurrentIndex(bestIdx);
+
+    m_formatCombo->blockSignals(false);
+    connect(m_formatCombo, &QComboBox::currentIndexChanged,
+            this, &CameraSourceModel::onFormatChanged,
+            Qt::UniqueConnection);
 }

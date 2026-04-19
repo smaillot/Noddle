@@ -4,6 +4,7 @@
 
 #include <QCamera>
 #include <QCameraDevice>
+#include <QCameraFormat>
 #include <QComboBox>
 #include <QLabel>
 #include <QMediaCaptureSession>
@@ -12,6 +13,9 @@
 #include <QTimer>
 #include <QVBoxLayout>
 #include <QVideoSink>
+
+#include <atomic>
+#include <QFuture>
 
 #include "data/ImageData.hpp"
 #include "widgets/FpsCounter.hpp"
@@ -38,6 +42,7 @@ public:
 private Q_SLOTS:
     void onToggleCamera();
     void onCameraDeviceChanged(int index);
+    void onFormatChanged(int index);
     void onVideoFrameChanged(const QVideoFrame &frame);
     void onUpdateFpsLabel();
 
@@ -45,18 +50,19 @@ private:
     void startCamera();
     void stopCamera();
     void populateCameraList();
+    void populateFormatList();
 
     // Camera pipeline
     QCamera *m_camera = nullptr;
     QMediaCaptureSession *m_captureSession = nullptr;
     QVideoSink *m_videoSink = nullptr;
 
-    // Frame rate limiting
-    QElapsedTimer m_frameThrottle;
-
     // FPS tracking
     FpsCounter m_fpsCounter;
     QTimer *m_fpsTimer = nullptr;
+    std::atomic<bool> m_processing{false};
+    QFuture<void> m_processingFuture;
+    QSize m_lastResolution;
 
     // Output data
     std::shared_ptr<ImageData> m_imageData;
@@ -64,11 +70,13 @@ private:
     // Widget
     QWidget *m_widget = nullptr;
     QComboBox *m_cameraCombo = nullptr;
+    QComboBox *m_formatCombo = nullptr;
     QPushButton *m_toggleButton = nullptr;
     QLabel *m_preview = nullptr;
     QLabel *m_fpsLabel = nullptr;
 
     // Camera list
     QList<QCameraDevice> m_cameras;
+    QList<QCameraFormat> m_formats;
     bool m_running = false;
 };
