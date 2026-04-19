@@ -6,6 +6,7 @@
 #include <QCameraDevice>
 #include <QCameraFormat>
 #include <QComboBox>
+#include <QJsonObject>
 #include <QLabel>
 #include <QMediaCaptureSession>
 #include <QMediaDevices>
@@ -36,6 +37,9 @@ public:
 
     void setInData(std::shared_ptr<QtNodes::NodeData>, QtNodes::PortIndex) override {}
     std::shared_ptr<QtNodes::NodeData> outData(QtNodes::PortIndex) override;
+
+    QJsonObject save() const override;
+    void load(QJsonObject const &j) override;
 
     QWidget *embeddedWidget() override;
 
@@ -79,4 +83,6 @@ private:
     QList<QCameraDevice> m_cameras;
     QList<QCameraFormat> m_formats;
     bool m_running = false;
+    int m_savedCameraIndex = 0;
+    int m_savedFormatIndex = 0;
 };

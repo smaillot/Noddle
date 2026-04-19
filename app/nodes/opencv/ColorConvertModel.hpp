@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QtNodes/NodeDelegateModel>
+#include <QJsonObject>
 #include <QComboBox>
 #include <QVBoxLayout>
 #include <QLabel>
@@ -33,12 +34,37 @@ public:
     void setInData(std::shared_ptr<QtNodes::NodeData> data, QtNodes::PortIndex) override
     {
         m_input = std::dynamic_pointer_cast<ImageData>(data);
+        if (!data) {
+            setValidationState({QtNodes::NodeValidationState::State::Warning, "Missing input"});
+            m_output.reset();
+            Q_EMIT dataUpdated(0);
+            return;
+        }
+        if (!m_input) {
+            setValidationState({QtNodes::NodeValidationState::State::Error, "Type mismatch"});
+            m_output.reset();
+            Q_EMIT dataUpdated(0);
+            return;
+        }
+        setValidationState({QtNodes::NodeValidationState::State::Valid, ""});
         process();
     }
 
     std::shared_ptr<QtNodes::NodeData> outData(QtNodes::PortIndex) override
     {
         return m_output;
+    }
+
+    QJsonObject save() const override
+    {
+        auto j = NodeDelegateModel::save();
+        j["conversionIndex"] = m_combo ? m_combo->currentIndex() : m_conversionIndex;
+        return j;
+    }
+
+    void load(QJsonObject const &j) override
+    {
+        m_conversionIndex = j["conversionIndex"].toInt(0);
     }
 
     QWidget *embeddedWidget() override
@@ -50,6 +76,7 @@ public:
 
             m_combo = new QComboBox();
             m_combo->addItems({"Grayscale", "HSV", "Lab"});
+            m_combo->setCurrentIndex(m_conversionIndex);
             layout->addWidget(m_combo);
 
             m_timeLabel = new QLabel("— ms");
@@ -76,12 +103,11 @@ private:
             cv::Mat src = qImageToMat(m_input->image());
             cv::Mat dst;
             int code = cv::COLOR_RGB2GRAY;
-            if (m_combo) {
-                switch (m_combo->currentIndex()) {
-                case 0: code = cv::COLOR_RGB2GRAY; break;
-                case 1: code = cv::COLOR_RGB2HSV; break;
-                case 2: code = cv::COLOR_RGB2Lab; break;
-                }
+            int idx = m_combo ? m_combo->currentIndex() : m_conversionIndex;
+            switch (idx) {
+            case 0: code = cv::COLOR_RGB2GRAY; break;
+            case 1: code = cv::COLOR_RGB2HSV; break;
+            case 2: code = cv::COLOR_RGB2Lab; break;
             }
             cv::cvtColor(src, dst, code);
             m_output = std::make_shared<ImageData>(matToQImage(dst));
@@ -101,6 +127,7 @@ private:
     QWidget *m_widget = nullptr;
     QComboBox *m_combo = nullptr;
     QLabel *m_timeLabel = nullptr;
+    int m_conversionIndex = 0;
     std::shared_ptr<ImageData> m_input;
     std::shared_ptr<ImageData> m_output;
 };

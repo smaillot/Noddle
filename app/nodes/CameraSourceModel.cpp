@@ -12,6 +12,9 @@ CameraSourceModel::CameraSourceModel()
     m_fpsTimer = new QTimer(this);
     m_fpsTimer->setInterval(1000);
     connect(m_fpsTimer, &QTimer::timeout, this, &CameraSourceModel::onUpdateFpsLabel);
+
+    if (m_cameras.isEmpty())
+        setValidationState({QtNodes::NodeValidationState::State::Warning, "No camera found"});
 }
 
 CameraSourceModel::~CameraSourceModel()
@@ -50,6 +53,8 @@ QWidget *CameraSourceModel::embeddedWidget()
         if (m_cameras.isEmpty())
             m_cameraCombo->addItem("No camera found");
         m_cameraCombo->setEnabled(!m_cameras.isEmpty());
+        if (m_savedCameraIndex < m_cameraCombo->count())
+            m_cameraCombo->setCurrentIndex(m_savedCameraIndex);
         connect(m_cameraCombo, &QComboBox::currentIndexChanged,
                 this, &CameraSourceModel::onCameraDeviceChanged);
         layout->addWidget(m_cameraCombo);
@@ -59,6 +64,8 @@ QWidget *CameraSourceModel::embeddedWidget()
         m_formatCombo->setStyleSheet("font-size: 10px;");
         layout->addWidget(m_formatCombo);
         populateFormatList();
+        if (m_savedFormatIndex < m_formatCombo->count())
+            m_formatCombo->setCurrentIndex(m_savedFormatIndex);
 
         m_preview = new QLabel("No feed");
         m_preview->setObjectName("nodePreview");
@@ -301,4 +308,18 @@ void CameraSourceModel::populateFormatList()
     connect(m_formatCombo, &QComboBox::currentIndexChanged,
             this, &CameraSourceModel::onFormatChanged,
             Qt::UniqueConnection);
+}
+
+QJsonObject CameraSourceModel::save() const
+{
+    auto j = NodeDelegateModel::save();
+    j["cameraIndex"] = m_cameraCombo ? m_cameraCombo->currentIndex() : m_savedCameraIndex;
+    j["formatIndex"] = m_formatCombo ? m_formatCombo->currentIndex() : m_savedFormatIndex;
+    return j;
+}
+
+void CameraSourceModel::load(QJsonObject const &j)
+{
+    m_savedCameraIndex = j["cameraIndex"].toInt(0);
+    m_savedFormatIndex = j["formatIndex"].toInt(0);
 }

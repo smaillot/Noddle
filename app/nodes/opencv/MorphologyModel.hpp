@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QtNodes/NodeDelegateModel>
+#include <QJsonObject>
 #include <QSpinBox>
 #include <QComboBox>
 #include <QVBoxLayout>
@@ -34,12 +35,39 @@ public:
     void setInData(std::shared_ptr<QtNodes::NodeData> data, QtNodes::PortIndex) override
     {
         m_input = std::dynamic_pointer_cast<ImageData>(data);
+        if (!data) {
+            setValidationState({QtNodes::NodeValidationState::State::Warning, "Missing input"});
+            m_output.reset();
+            Q_EMIT dataUpdated(0);
+            return;
+        }
+        if (!m_input) {
+            setValidationState({QtNodes::NodeValidationState::State::Error, "Type mismatch"});
+            m_output.reset();
+            Q_EMIT dataUpdated(0);
+            return;
+        }
+        setValidationState({QtNodes::NodeValidationState::State::Valid, ""});
         process();
     }
 
     std::shared_ptr<QtNodes::NodeData> outData(QtNodes::PortIndex) override
     {
         return m_output;
+    }
+
+    QJsonObject save() const override
+    {
+        auto j = NodeDelegateModel::save();
+        j["opIndex"] = m_opCombo ? m_opCombo->currentIndex() : m_opIndex;
+        j["kernelSize"] = m_kernelSpin ? m_kernelSpin->value() : m_kernelSize;
+        return j;
+    }
+
+    void load(QJsonObject const &j) override
+    {
+        m_opIndex = j["opIndex"].toInt(0);
+        m_kernelSize = j["kernelSize"].toInt(3);
     }
 
     QWidget *embeddedWidget() override
@@ -51,11 +79,12 @@ public:
 
             m_opCombo = new QComboBox();
             m_opCombo->addItems({"Erode", "Dilate", "Open", "Close"});
+            m_opCombo->setCurrentIndex(m_opIndex);
 
             m_kernelSpin = new QSpinBox();
             m_kernelSpin->setRange(1, 31);
             m_kernelSpin->setSingleStep(2);
-            m_kernelSpin->setValue(3);
+            m_kernelSpin->setValue(m_kernelSize);
 
             layout->addWidget(new QLabel("Operation"));
             layout->addWidget(m_opCombo);
@@ -85,11 +114,12 @@ private:
             ScopeStageTimer t(caption(), "process");
 #ifdef NODDLE_WITH_OPENCV
             cv::Mat src = qImageToMat(m_input->image());
-            int k = m_kernelSpin->value() | 1;
+            int k = (m_kernelSpin ? m_kernelSpin->value() : m_kernelSize) | 1;
             cv::Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(k, k));
             cv::Mat dst;
 
-            switch (m_opCombo->currentIndex()) {
+            int opIdx = m_opCombo ? m_opCombo->currentIndex() : m_opIndex;
+            switch (opIdx) {
             case 0: cv::erode(src, dst, kernel); break;
             case 1: cv::dilate(src, dst, kernel); break;
             case 2: cv::morphologyEx(src, dst, cv::MORPH_OPEN, kernel); break;
@@ -115,6 +145,8 @@ private:
     QComboBox *m_opCombo = nullptr;
     QSpinBox *m_kernelSpin = nullptr;
     QLabel *m_timeLabel = nullptr;
+    int m_opIndex = 0;
+    int m_kernelSize = 3;
     std::shared_ptr<ImageData> m_input;
     std::shared_ptr<ImageData> m_output;
 };

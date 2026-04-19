@@ -29,12 +29,26 @@ public:
 
     void setInData(std::shared_ptr<QtNodes::NodeData> data, QtNodes::PortIndex) override
     {
-        m_receivedData = std::dynamic_pointer_cast<ImageData>(data);
-
         // Ensure widget is created
         embeddedWidget();
 
-        if (m_receivedData && !m_receivedData->image().isNull()) {
+        if (!data) {
+            setValidationState({QtNodes::NodeValidationState::State::Warning, "No input image"});
+            m_receivedData.reset();
+            if (m_preview)
+                m_preview->setText("No image");
+            return;
+        }
+        m_receivedData = std::dynamic_pointer_cast<ImageData>(data);
+        if (!m_receivedData) {
+            setValidationState({QtNodes::NodeValidationState::State::Error, "Type mismatch"});
+            if (m_preview)
+                m_preview->setText("No image");
+            return;
+        }
+        setValidationState({QtNodes::NodeValidationState::State::Valid, ""});
+
+        if (!m_receivedData->image().isNull()) {
             {
                 ScopeStageTimer t(caption(), "display");
                 QImage scaled = m_receivedData->image().scaled(
@@ -48,7 +62,6 @@ public:
                 m_timeLabel->setText(QString("%1 ms").arg(ms, 0, 'f', 2));
             }
         } else {
-            m_receivedData.reset();
             if (m_preview)
                 m_preview->setText("No image");
         }

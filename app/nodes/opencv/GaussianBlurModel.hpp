@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QtNodes/NodeDelegateModel>
+#include <QJsonObject>
 #include <QSpinBox>
 #include <QVBoxLayout>
 #include <QLabel>
@@ -33,12 +34,37 @@ public:
     void setInData(std::shared_ptr<QtNodes::NodeData> data, QtNodes::PortIndex) override
     {
         m_input = std::dynamic_pointer_cast<ImageData>(data);
+        if (!data) {
+            setValidationState({QtNodes::NodeValidationState::State::Warning, "Missing input"});
+            m_output.reset();
+            Q_EMIT dataUpdated(0);
+            return;
+        }
+        if (!m_input) {
+            setValidationState({QtNodes::NodeValidationState::State::Error, "Type mismatch"});
+            m_output.reset();
+            Q_EMIT dataUpdated(0);
+            return;
+        }
+        setValidationState({QtNodes::NodeValidationState::State::Valid, ""});
         process();
     }
 
     std::shared_ptr<QtNodes::NodeData> outData(QtNodes::PortIndex) override
     {
         return m_output;
+    }
+
+    QJsonObject save() const override
+    {
+        auto j = NodeDelegateModel::save();
+        j["kernelSize"] = m_kernelSpin ? m_kernelSpin->value() : m_kernelSize;
+        return j;
+    }
+
+    void load(QJsonObject const &j) override
+    {
+        m_kernelSize = j["kernelSize"].toInt(5);
     }
 
     QWidget *embeddedWidget() override
@@ -51,7 +77,7 @@ public:
             m_kernelSpin = new QSpinBox();
             m_kernelSpin->setRange(1, 99);
             m_kernelSpin->setSingleStep(2);
-            m_kernelSpin->setValue(5);
+            m_kernelSpin->setValue(m_kernelSize);
 
             layout->addWidget(new QLabel("Kernel"));
             layout->addWidget(m_kernelSpin);
@@ -79,7 +105,7 @@ private:
 #ifdef NODDLE_WITH_OPENCV
             cv::Mat src = qImageToMat(m_input->image());
             cv::Mat dst;
-            int k = m_kernelSpin->value() | 1; // ensure odd
+            int k = (m_kernelSpin ? m_kernelSpin->value() : m_kernelSize) | 1;
             cv::GaussianBlur(src, dst, cv::Size(k, k), 0);
             m_output = std::make_shared<ImageData>(matToQImage(dst));
 #else
@@ -98,6 +124,7 @@ private:
     QWidget *m_widget = nullptr;
     QSpinBox *m_kernelSpin = nullptr;
     QLabel *m_timeLabel = nullptr;
+    int m_kernelSize = 5;
     std::shared_ptr<ImageData> m_input;
     std::shared_ptr<ImageData> m_output;
 };

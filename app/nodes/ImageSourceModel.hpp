@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QtNodes/NodeDelegateModel>
+#include <QJsonObject>
 #include <QLabel>
 #include <QFileDialog>
 #include <QPushButton>
@@ -31,6 +32,27 @@ public:
 
     void setInData(std::shared_ptr<QtNodes::NodeData>, QtNodes::PortIndex) override {}
 
+    QJsonObject save() const override
+    {
+        auto j = NodeDelegateModel::save();
+        j["filePath"] = m_filePath;
+        return j;
+    }
+
+    void load(QJsonObject const &j) override
+    {
+        m_filePath = j["filePath"].toString();
+        if (!m_filePath.isEmpty()) {
+            QImage img(m_filePath);
+            if (!img.isNull()) {
+                m_imageData = std::make_shared<ImageData>(img);
+                setValidationState({QtNodes::NodeValidationState::State::Valid, ""});
+            } else {
+                setValidationState({QtNodes::NodeValidationState::State::Error, "Cannot read file"});
+            }
+        }
+    }
+
     std::shared_ptr<QtNodes::NodeData> outData(QtNodes::PortIndex) override
     {
         return m_imageData;
@@ -53,6 +75,14 @@ public:
 
             layout->addWidget(m_preview);
             layout->addWidget(btn);
+
+            // Restore preview from loaded data
+            if (m_imageData && !m_imageData->image().isNull()) {
+                m_preview->setPixmap(QPixmap::fromImage(
+                    m_imageData->image().scaled(120, 90, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+            } else {
+                setValidationState({QtNodes::NodeValidationState::State::Warning, "No image loaded"});
+            }
         }
         return m_widget;
     }
@@ -68,8 +98,13 @@ private Q_SLOTS:
             return;
 
         QImage img(path);
-        if (img.isNull())
+        if (img.isNull()) {
+            setValidationState({QtNodes::NodeValidationState::State::Error, "Cannot read file"});
             return;
+        }
+
+        m_filePath = path;
+        setValidationState({QtNodes::NodeValidationState::State::Valid, ""});
 
         m_imageData = std::make_shared<ImageData>(img);
         m_preview->setPixmap(QPixmap::fromImage(
@@ -81,5 +116,6 @@ private Q_SLOTS:
 private:
     QWidget *m_widget = nullptr;
     QLabel *m_preview = nullptr;
+    QString m_filePath;
     std::shared_ptr<ImageData> m_imageData;
 };

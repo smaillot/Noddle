@@ -1,6 +1,7 @@
 #pragma once
 
 #include <QtNodes/NodeDelegateModel>
+#include <QJsonObject>
 #include <QSpinBox>
 #include <QVBoxLayout>
 #include <QLabel>
@@ -33,12 +34,39 @@ public:
     void setInData(std::shared_ptr<QtNodes::NodeData> data, QtNodes::PortIndex) override
     {
         m_input = std::dynamic_pointer_cast<ImageData>(data);
+        if (!data) {
+            setValidationState({QtNodes::NodeValidationState::State::Warning, "Missing input"});
+            m_output.reset();
+            Q_EMIT dataUpdated(0);
+            return;
+        }
+        if (!m_input) {
+            setValidationState({QtNodes::NodeValidationState::State::Error, "Type mismatch"});
+            m_output.reset();
+            Q_EMIT dataUpdated(0);
+            return;
+        }
+        setValidationState({QtNodes::NodeValidationState::State::Valid, ""});
         process();
     }
 
     std::shared_ptr<QtNodes::NodeData> outData(QtNodes::PortIndex) override
     {
         return m_output;
+    }
+
+    QJsonObject save() const override
+    {
+        auto j = NodeDelegateModel::save();
+        j["lowThresh"] = m_lowSpin ? m_lowSpin->value() : m_lowThresh;
+        j["highThresh"] = m_highSpin ? m_highSpin->value() : m_highThresh;
+        return j;
+    }
+
+    void load(QJsonObject const &j) override
+    {
+        m_lowThresh = j["lowThresh"].toInt(50);
+        m_highThresh = j["highThresh"].toInt(150);
     }
 
     QWidget *embeddedWidget() override
@@ -50,11 +78,11 @@ public:
 
             m_lowSpin = new QSpinBox();
             m_lowSpin->setRange(0, 500);
-            m_lowSpin->setValue(50);
+            m_lowSpin->setValue(m_lowThresh);
 
             m_highSpin = new QSpinBox();
             m_highSpin->setRange(0, 500);
-            m_highSpin->setValue(150);
+            m_highSpin->setValue(m_highThresh);
 
             layout->addWidget(new QLabel("Low"));
             layout->addWidget(m_lowSpin);
@@ -91,7 +119,9 @@ private:
                 gray = src;
 
             cv::Mat dst;
-            cv::Canny(gray, dst, m_lowSpin->value(), m_highSpin->value());
+            int lo = m_lowSpin ? m_lowSpin->value() : m_lowThresh;
+            int hi = m_highSpin ? m_highSpin->value() : m_highThresh;
+            cv::Canny(gray, dst, lo, hi);
             m_output = std::make_shared<ImageData>(matToQImage(dst));
 #else
             m_output = m_input;
@@ -110,6 +140,8 @@ private:
     QSpinBox *m_lowSpin = nullptr;
     QSpinBox *m_highSpin = nullptr;
     QLabel *m_timeLabel = nullptr;
+    int m_lowThresh = 50;
+    int m_highThresh = 150;
     std::shared_ptr<ImageData> m_input;
     std::shared_ptr<ImageData> m_output;
 };
