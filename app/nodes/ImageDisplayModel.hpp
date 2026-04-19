@@ -28,19 +28,20 @@ public:
 
     void setInData(std::shared_ptr<QtNodes::NodeData> data, QtNodes::PortIndex) override
     {
-        auto imageData = std::dynamic_pointer_cast<ImageData>(data);
+        m_receivedData = std::dynamic_pointer_cast<ImageData>(data);
 
-        if (imageData && !imageData->image().isNull()) {
+        if (m_receivedData && !m_receivedData->image().isNull()) {
             m_preview->setPixmap(QPixmap::fromImage(
-                imageData->image().scaled(200, 150, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
+                m_receivedData->image().scaled(200, 150, Qt::KeepAspectRatio, Qt::SmoothTransformation)));
         } else {
+            m_receivedData.reset();
             m_preview->setText("No image");
         }
     }
 
     std::shared_ptr<QtNodes::NodeData> outData(QtNodes::PortIndex) override
     {
-        return nullptr;
+        return m_receivedData;
     }
 
     QWidget *embeddedWidget() override
@@ -63,4 +64,5 @@ public:
 private:
     QWidget *m_widget = nullptr;
     QLabel *m_preview = nullptr;
+    std::shared_ptr<ImageData> m_receivedData;
 };

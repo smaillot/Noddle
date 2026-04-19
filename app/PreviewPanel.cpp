@@ -2,6 +2,7 @@
 #include "data/ImageData.hpp"
 
 #include <QPixmap>
+#include <QSizePolicy>
 #include <QTimer>
 
 #include <QtNodes/DataFlowGraphModel>
@@ -33,6 +34,7 @@ PreviewPanel::PreviewPanel(DataFlowGraphModel &graphModel, QWidget *parent)
     m_previewLabel = new QLabel("Select a node to preview", container);
     m_previewLabel->setAlignment(Qt::AlignCenter);
     m_previewLabel->setMinimumSize(280, 200);
+    m_previewLabel->setSizePolicy(QSizePolicy::Ignored, QSizePolicy::Ignored);
     m_previewLabel->setStyleSheet("background-color: #2b2b2b; color: #888; border: 1px solid #444;");
     layout->addWidget(m_previewLabel, 1);
 
@@ -55,29 +57,21 @@ PreviewPanel::PreviewPanel(DataFlowGraphModel &graphModel, QWidget *parent)
 
 QImage PreviewPanel::extractPreviewImage(NodeId nodeId)
 {
-    // Try output ports first, then input ports
-    for (auto portType : {PortType::Out, PortType::In}) {
-        unsigned int nPorts = m_graphModel.nodeData(nodeId,
-            portType == PortType::Out ? NodeRole::OutPortCount : NodeRole::InPortCount)
-            .toUInt();
+    auto *model = m_graphModel.delegateModel<NodeDelegateModel>(nodeId);
+    if (!model)
+        return {};
 
-        for (unsigned int i = 0; i < nPorts; ++i) {
-            auto *model = m_graphModel.delegateModel<NodeDelegateModel>(nodeId);
-            if (!model)
-                continue;
-
-            std::shared_ptr<QtNodes::NodeData> data;
-            if (portType == PortType::Out) {
-                data = model->outData(static_cast<PortIndex>(i));
-            }
-            if (!data)
-                continue;
-
-            auto *imgData = dynamic_cast<ImageData *>(data.get());
-            if (imgData && !imgData->image().isNull())
-                return imgData->image();
-        }
+    // Try output ports first
+    unsigned int outPorts = m_graphModel.nodeData(nodeId, NodeRole::OutPortCount).toUInt();
+    for (unsigned int i = 0; i < outPorts; ++i) {
+        auto data = model->outData(static_cast<PortIndex>(i));
+        if (!data)
+            continue;
+        auto *imgData = dynamic_cast<ImageData *>(data.get());
+        if (imgData && !imgData->image().isNull())
+            return imgData->image();
     }
+
     return {};
 }
 
