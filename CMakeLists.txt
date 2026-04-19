@@ -8,6 +8,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # ── Options ──────────────────────────────────────────────────────
 option(NODDLE_WITH_OPENCV "Build with OpenCV nodes" OFF)
+option(NODDLE_BUILD_TESTS "Build unit tests (Catch2)" ON)
 
 # ── Core library ─────────────────────────────────────────────────
 add_subdirectory(backend/cpp)
@@ -21,3 +22,9 @@ add_subdirectory(external/nodeeditor)
 
 # ── Application ──────────────────────────────────────────────────
 add_subdirectory(app)
+
+# ── Tests ────────────────────────────────────────────────────────
+if(NODDLE_BUILD_TESTS)
+    enable_testing()
+    add_subdirectory(tests)
+endif()
