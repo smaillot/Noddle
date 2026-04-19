@@ -28,6 +28,11 @@ set(APP_SOURCES
     NoddleConnectionPainter.cpp
     TimelineView.hpp
     TimelineView.cpp
+    engine/GraphSchedule.hpp
+    engine/GraphSchedule.cpp
+    engine/FrameDispatcher.hpp
+    engine/PipelineExecutor.hpp
+    engine/PipelineExecutor.cpp
 )
 
 add_executable(noddle_app ${APP_SOURCES})

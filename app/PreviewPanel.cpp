@@ -141,3 +141,9 @@ void PreviewPanel::onUpdateFpsLabel()
 {
     m_fpsLabel->setText(QString("FPS: %1").arg(m_fpsCounter.fps(), 0, 'f', 1));
 }
+
+void PreviewPanel::refreshForNode(NodeId nodeId)
+{
+    if (nodeId == m_selectedNodeId)
+        refreshPreview();
+}

@@ -2,6 +2,7 @@
 #include "NoddleConnectionPainter.hpp"
 #include "PreviewPanel.hpp"
 #include "TimelineView.hpp"
+#include "engine/PipelineExecutor.hpp"
 #include "widgets/PipelineProfiler.hpp"
 
 #include <QtNodes/internal/NodeGraphicsObject.hpp>
@@ -276,6 +277,14 @@ NoddleMainWindow::NoddleMainWindow(QWidget *parent)
             this, &NoddleMainWindow::onSceneModified);
 
     setupMenus();
+
+    m_executor = new noddle::PipelineExecutor(*m_graphModel, this);
+
+    connect(m_executor, &noddle::PipelineExecutor::nodeOutputReady,
+            m_previewPanel, [this](QtNodes::NodeId nodeId, QtNodes::PortIndex) {
+        m_previewPanel->refreshForNode(nodeId);
+    });
+
     setupStatusBar();
     updateWindowTitle();
 }
@@ -413,6 +422,47 @@ void NoddleMainWindow::setupMenus()
 
     editMenu->addAction(tr("D&elete"), m_graphicsView,
                         &QtNodes::GraphicsView::onDeleteSelectedObjects);
+
+    // --- Pipeline menu ---
+    auto *pipelineMenu = menuBar()->addMenu(tr("&Pipeline"));
+
+    auto *runAct = pipelineMenu->addAction(tr("&Run"));
+    runAct->setShortcut(QKeySequence(Qt::Key_F5));
+
+    auto *stopAct = pipelineMenu->addAction(tr("&Stop"));
+    stopAct->setShortcut(QKeySequence(Qt::SHIFT | Qt::Key_F5));
+    stopAct->setEnabled(false);
+
+    auto *pauseAct = pipelineMenu->addAction(tr("&Pause"));
+    pauseAct->setShortcut(QKeySequence(Qt::Key_F6));
+    pauseAct->setCheckable(true);
+    pauseAct->setEnabled(false);
+
+    connect(runAct, &QAction::triggered, this, [=]() {
+        m_executor->start();
+        runAct->setEnabled(false);
+        stopAct->setEnabled(true);
+        pauseAct->setEnabled(true);
+    });
+
+    connect(stopAct, &QAction::triggered, this, [=]() {
+        m_executor->stop();
+        runAct->setEnabled(true);
+        stopAct->setEnabled(false);
+        pauseAct->setEnabled(false);
+        pauseAct->setChecked(false);
+    });
+
+    connect(pauseAct, &QAction::toggled, this, [=](bool checked) {
+        m_executor->setPaused(checked);
+    });
+
+    connect(m_executor, &noddle::PipelineExecutor::stopped, this, [=]() {
+        runAct->setEnabled(true);
+        stopAct->setEnabled(false);
+        pauseAct->setEnabled(false);
+        pauseAct->setChecked(false);
+    });
 
     // --- View menu ---
     auto *viewMenu = menuBar()->addMenu(tr("&View"));
