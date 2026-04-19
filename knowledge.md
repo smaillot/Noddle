@@ -103,6 +103,20 @@
 - **Phase 1 (Priorité)**: Vrai node editor graphique Qt, searchbox, sérialisation JSON, auto-inférence types.
 - **Phase 2**: Source caméra live, preview par nœud, overload strategies production, bibliothèque OpenCV étendue.
 - **Phase 3**: Export code C++, undo/redo, copy/paste, groupes/sous-pipelines, erreurs visuelles.
+
+## Phase 3 — Live Camera Source (2026-04-19)
+- `CameraSourceModel` added: Qt6 Multimedia-based live camera node (QCamera + QVideoSink).
+  - Camera enumeration via `QMediaDevices::videoInputs()`.
+  - Frame rate limiting at ~30fps via `QElapsedTimer` throttle.
+  - Embedded widget: camera selector (QComboBox), Start/Stop toggle, 120x90 preview, FPS counter.
+  - Split .hpp/.cpp (required for QMediaCaptureSession linking).
+- `FpsCounter` utility class in `app/widgets/FpsCounter.hpp`.
+- `PreviewPanel` updated: auto-refresh on data changes.
+  - Connects to `DataFlowGraphModel::inPortDataWasSet` for downstream nodes.
+  - Connects to selected node's `NodeDelegateModel::dataUpdated` for source nodes.
+  - Tracks `m_selectedNodeId` — disconnects previous node on re-selection.
+  - FPS display label in preview panel.
+- `Qt6::Multimedia` added to CMake build (qt6-multimedia-dev 6.4.2).
 - **Phase 4**: Plugins Python/C++ custom, file d'exécution async, ONNX Runtime, export exécutable.
 
 ## Phase 1 Status (2026-04-19) ✅ VALIDATED
@@ -112,14 +126,29 @@
 - Full node registry in 3 categories (Sources, Display, OpenCV)
 - Merged to `develop` from `feature/phase1-node-models`
 
-## Phase 2 Status (2026-04-19) — IN PROGRESS
+## Phase 2 Status (2026-04-19) ✅ VALIDATED
 - `NoddleMainWindow` class: proper QMainWindow subclass owning graph model, scene, view
-- `PreviewPanel` QDockWidget: right dock, shows selected node caption + widget grab preview
+- `PreviewPanel` QDockWidget: right dock, shows selected node caption + extracted ImageData preview
 - File menu: New (Ctrl+N), Open (Ctrl+O), Save (Ctrl+S), Save As (Ctrl+Shift+S), Quit (Ctrl+Q)
-- Edit menu: Undo (Ctrl+Z), Redo (Ctrl+Shift+Z) via scene undo stack
+- Edit menu: Undo/Redo via scene undo stack (shortcuts handled by QtNodes GraphicsView)
 - View menu: Toggle Preview Panel
 - JSON save/load: `.noddle` file format using DataFlowGraphModel::save()/load()
 - Modified state tracking: `●` prefix in title, save prompt on close/new/open
 - Refactored main.cpp to minimal 13-line entry point
+- Merged to `develop` from `feature/phase2-main-window`
+
+## Phase 3 Status (2026-04-19) — IN PROGRESS
+- `CameraSourceModel`: live camera source using Qt6 Multimedia (QCamera + QMediaCaptureSession + QVideoSink)
+  - Camera device selection via QComboBox
+  - Start/Stop toggle button
+  - Frame rate throttle at ~30fps (QElapsedTimer)
+  - FPS counter in embedded widget
+  - 120x90 preview in node
+- `FpsCounter`: utility class for frame rate measurement (averaged over 1 second)
+- `PreviewPanel` enhanced:
+  - Auto-refresh on `inPortDataWasSet` (downstream nodes) and `dataUpdated` (source nodes)
+  - Node-specific delegate model connection/disconnection on selection change
+  - FPS display for preview refresh rate
+- Qt6 Multimedia added: `qt6-multimedia-dev`, `Qt6::Multimedia` linked
 - Build: 100%, Tests: 37/37, App: launches OK
-- Branch: `feature/phase2-main-window`
+- Branch: `feature/phase3-live-camera`

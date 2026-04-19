@@ -16,6 +16,7 @@
 #include "nodes/ImageSourceModel.hpp"
 #include "nodes/CsvSourceModel.hpp"
 #include "nodes/PointCloudSourceModel.hpp"
+#include "nodes/CameraSourceModel.hpp"
 #include "nodes/ImageDisplayModel.hpp"
 
 #ifdef NODDLE_WITH_OPENCV
@@ -122,6 +123,7 @@ std::shared_ptr<NodeDelegateModelRegistry> NoddleMainWindow::createRegistry()
     registry->registerModel<ImageSourceModel>("Sources");
     registry->registerModel<CsvSourceModel>("Sources");
     registry->registerModel<PointCloudSourceModel>("Sources");
+    registry->registerModel<CameraSourceModel>("Sources");
 
     // Display nodes
     registry->registerModel<ImageDisplayModel>("Display");

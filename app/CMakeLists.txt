@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-find_package(Qt6 REQUIRED COMPONENTS Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Widgets Multimedia)
 qt_standard_project_setup()
 
 set(APP_SOURCES
@@ -18,6 +18,9 @@ set(APP_SOURCES
     nodes/opencv/GaussianBlurModel.hpp
     nodes/opencv/ThresholdModel.hpp
     nodes/opencv/CannyModel.hpp
+    nodes/CameraSourceModel.hpp
+    nodes/CameraSourceModel.cpp
+    widgets/FpsCounter.hpp
     nodes/opencv/MorphologyModel.hpp
 )
 
@@ -28,6 +31,7 @@ target_include_directories(noddle_app PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
 target_link_libraries(noddle_app
     PRIVATE
         Qt6::Widgets
+        Qt6::Multimedia
         QtNodes::QtNodes
         noddle_core
 )
