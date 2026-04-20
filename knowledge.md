@@ -325,3 +325,20 @@
   - `m_executor` member, created in constructor after `setupMenus()`.
   - `nodeOutputReady` signal connected to `PreviewPanel::refreshForNode()` for async preview refresh.
 - **PreviewPanel**: `refreshForNode(NodeId)` public method — refreshes preview if nodeId matches selected node.
+
+### Phase 3 Fixes — Merged to develop (2026-04-21)
+- **ColorSpace tracking**: `ImageData` now carries `ColorSpace` enum (8 values). `channels()` and `colorSpace()` accessors.
+- **ColorConvertModel rewrite**: Bidirectional with 2 combo boxes (input auto-follows data, output shows valid targets only). 26 valid conversion codes via lookup table.
+- **Connection painter**: Shows "Image 640×480×3 RGB" metadata on hover/selection.
+- **FPS display fix**: Status bar hides FPS for static pipelines (no camera frames). PreviewPanel shows "—" instead of "0.0".
+- **Pipeline > Benchmark…**: Re-runs pipeline N iterations (user-supplied count) for statistical profiling. Shows avg timing. Progress dialog with cancel.
+- **Pipeline > Clear Profiler**: Resets all profiler data.
+- **Cache purge**: Already handled by QtNodes — `setInData(nullptr)` on disconnect triggers `m_output.reset()` + `dataUpdated(0)`.
+
+### Merge Notes (2026-04-21)
+- Both `feature/phase3-fixes` and `feature/phase4a-async-engine` merged to `develop`.
+- Conflict resolved in `ColorConvertModel.hpp`: combined color space widget updates + time label in `refreshWidgets()`.
+- Pipeline menu consolidated: Run/Stop/Pause (from Phase 4A) + Benchmark/Clear Profiler (from Phase 3 fixes).
+- Fixed `QtConcurrent::run()` nodiscard warning with `(void)` cast.
+- Fixed deprecated `[=]` lambda captures to explicit `[this, ...]` lists.
+- All 86 tests pass on merged develop.
