@@ -139,5 +139,9 @@ void PreviewPanel::refreshPreview()
 
 void PreviewPanel::onUpdateFpsLabel()
 {
-    m_fpsLabel->setText(QString("FPS: %1").arg(m_fpsCounter.fps(), 0, 'f', 1));
+    double f = m_fpsCounter.fps();
+    if (f > 0.1)
+        m_fpsLabel->setText(QString("FPS: %1").arg(f, 0, 'f', 1));
+    else
+        m_fpsLabel->setText(QStringLiteral("FPS: \u2014"));
 }
