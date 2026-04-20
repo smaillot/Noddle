@@ -128,7 +128,7 @@ private:
             }
             int tv = m_threshSpin ? m_threshSpin->value() : m_threshValue;
             cv::threshold(gray, dst, tv, 255, type);
-            m_output = std::make_shared<ImageData>(matToQImage(dst));
+            m_output = std::make_shared<ImageData>(matToQImage(dst), ColorSpace::Grayscale);
 #else
             m_output = m_input;
 #endif
