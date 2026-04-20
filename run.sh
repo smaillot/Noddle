@@ -8,7 +8,7 @@ APP_BIN="${BUILD_DIR}/app/noddle_app"
 # Build if needed
 if [[ ! -f "$APP_BIN" ]]; then
     echo "[noddle] Binary not found, building..."
-    cmake -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Debug "$PROJECT_ROOT"
+    cmake -B "$BUILD_DIR" -DCMAKE_BUILD_TYPE=Debug -DNODDLE_WITH_OPENCV=ON "$PROJECT_ROOT"
     cmake --build "$BUILD_DIR" -j"$(nproc)"
 fi
 

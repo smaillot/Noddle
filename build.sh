@@ -11,6 +11,7 @@ echo "[noddle] Configuring (${BUILD_TYPE})..."
 cmake -B "$BUILD_DIR" \
     -DCMAKE_BUILD_TYPE="$BUILD_TYPE" \
     -DNODDLE_BUILD_TESTS=ON \
+    -DNODDLE_WITH_OPENCV=ON \
     "$PROJECT_ROOT"
 
 echo "[noddle] Building (${JOBS} jobs)..."
