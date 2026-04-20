@@ -52,6 +52,9 @@
 - Source node contracts and initial image/csv/pointcloud nodes added.
 - OpenCV block node classes added with optional OpenCV-backed implementation path.
 - Build and demo execution re-validated successfully after MVP updates.
+- **Color space tracking** added to `ImageData` (enum `ColorSpace` with 8 values: RGB, BGR, Grayscale, HSV, HLS, Lab, YCrCb, XYZ).
+- `ColorConvertModel` rewritten with dual combo boxes (input space auto-follows incoming data, output space shows only valid targets).
+- All OpenCV nodes propagate color space: pass-through for GaussianBlur/Resize/Morphology, `Grayscale` tag for Threshold/Canny.
 
 ## Frontend Status (2026-04-11)
 - **PySide6 frontend REMOVED** (Phase 0, 2026-04-19). Replaced by C++/Qt6 native frontend.

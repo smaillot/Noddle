@@ -11,6 +11,7 @@
 
 #ifdef NODDLE_WITH_OPENCV
 #include "nodes/opencv/MatConvert.hpp"
+#include <opencv2/imgproc.hpp>
 #endif
 
 class ColorConvertModel : public QtNodes::NodeDelegateModel
@@ -31,6 +32,74 @@ public:
         return ImageData(QImage()).type();
     }
 
+    // Returns the list of valid target color space names for a given input space
+    static QStringList validTargets(ColorSpace from)
+    {
+        switch (from) {
+        case ColorSpace::RGB:
+        case ColorSpace::BGR:
+            return {"RGB", "BGR", "Gray", "HSV", "HLS", "Lab", "YCrCb", "XYZ"};
+        case ColorSpace::Grayscale:
+            return {"RGB", "BGR"};
+        case ColorSpace::HSV:
+            return {"RGB", "BGR"};
+        case ColorSpace::HLS:
+            return {"RGB", "BGR"};
+        case ColorSpace::Lab:
+            return {"RGB", "BGR"};
+        case ColorSpace::YCrCb:
+            return {"RGB", "BGR"};
+        case ColorSpace::XYZ:
+            return {"RGB", "BGR"};
+        }
+        return {};
+    }
+
+    // Returns the OpenCV color conversion code, or -1 if invalid
+    static int cvtColorCode(ColorSpace from, ColorSpace to)
+    {
+#ifdef NODDLE_WITH_OPENCV
+        if (from == to) return -1;
+        // RGB source
+        if (from == ColorSpace::RGB && to == ColorSpace::BGR)       return cv::COLOR_RGB2BGR;
+        if (from == ColorSpace::RGB && to == ColorSpace::Grayscale) return cv::COLOR_RGB2GRAY;
+        if (from == ColorSpace::RGB && to == ColorSpace::HSV)       return cv::COLOR_RGB2HSV;
+        if (from == ColorSpace::RGB && to == ColorSpace::HLS)       return cv::COLOR_RGB2HLS;
+        if (from == ColorSpace::RGB && to == ColorSpace::Lab)       return cv::COLOR_RGB2Lab;
+        if (from == ColorSpace::RGB && to == ColorSpace::YCrCb)     return cv::COLOR_RGB2YCrCb;
+        if (from == ColorSpace::RGB && to == ColorSpace::XYZ)       return cv::COLOR_RGB2XYZ;
+        // BGR source
+        if (from == ColorSpace::BGR && to == ColorSpace::RGB)       return cv::COLOR_BGR2RGB;
+        if (from == ColorSpace::BGR && to == ColorSpace::Grayscale) return cv::COLOR_BGR2GRAY;
+        if (from == ColorSpace::BGR && to == ColorSpace::HSV)       return cv::COLOR_BGR2HSV;
+        if (from == ColorSpace::BGR && to == ColorSpace::HLS)       return cv::COLOR_BGR2HLS;
+        if (from == ColorSpace::BGR && to == ColorSpace::Lab)       return cv::COLOR_BGR2Lab;
+        if (from == ColorSpace::BGR && to == ColorSpace::YCrCb)     return cv::COLOR_BGR2YCrCb;
+        if (from == ColorSpace::BGR && to == ColorSpace::XYZ)       return cv::COLOR_BGR2XYZ;
+        // Grayscale source
+        if (from == ColorSpace::Grayscale && to == ColorSpace::RGB) return cv::COLOR_GRAY2RGB;
+        if (from == ColorSpace::Grayscale && to == ColorSpace::BGR) return cv::COLOR_GRAY2BGR;
+        // HSV source
+        if (from == ColorSpace::HSV && to == ColorSpace::RGB)       return cv::COLOR_HSV2RGB;
+        if (from == ColorSpace::HSV && to == ColorSpace::BGR)       return cv::COLOR_HSV2BGR;
+        // HLS source
+        if (from == ColorSpace::HLS && to == ColorSpace::RGB)       return cv::COLOR_HLS2RGB;
+        if (from == ColorSpace::HLS && to == ColorSpace::BGR)       return cv::COLOR_HLS2BGR;
+        // Lab source
+        if (from == ColorSpace::Lab && to == ColorSpace::RGB)       return cv::COLOR_Lab2RGB;
+        if (from == ColorSpace::Lab && to == ColorSpace::BGR)       return cv::COLOR_Lab2BGR;
+        // YCrCb source
+        if (from == ColorSpace::YCrCb && to == ColorSpace::RGB)     return cv::COLOR_YCrCb2RGB;
+        if (from == ColorSpace::YCrCb && to == ColorSpace::BGR)     return cv::COLOR_YCrCb2BGR;
+        // XYZ source
+        if (from == ColorSpace::XYZ && to == ColorSpace::RGB)       return cv::COLOR_XYZ2RGB;
+        if (from == ColorSpace::XYZ && to == ColorSpace::BGR)       return cv::COLOR_XYZ2BGR;
+#else
+        Q_UNUSED(from); Q_UNUSED(to);
+#endif
+        return -1;
+    }
+
     void setInData(std::shared_ptr<QtNodes::NodeData> data, QtNodes::PortIndex) override
     {
         m_input = std::dynamic_pointer_cast<ImageData>(data);
@@ -47,6 +116,15 @@ public:
             return;
         }
         setValidationState({QtNodes::NodeValidationState::State::Valid, ""});
+
+        // Auto-follow incoming color space
+        m_inputCS = m_input->colorSpace();
+        if (m_inputCombo) {
+            m_inputCombo->blockSignals(true);
+            m_inputCombo->setCurrentIndex(static_cast<int>(m_inputCS));
+            m_inputCombo->blockSignals(false);
+        }
+        rebuildOutputCombo();
         process();
     }
 
@@ -58,13 +136,15 @@ public:
     QJsonObject save() const override
     {
         auto j = NodeDelegateModel::save();
-        j["conversionIndex"] = m_combo ? m_combo->currentIndex() : m_conversionIndex;
+        j["inputIndex"] = m_inputCombo ? m_inputCombo->currentIndex() : static_cast<int>(m_inputCS);
+        j["outputIndex"] = m_outputCombo ? m_outputCombo->currentIndex() : m_outputIndex;
         return j;
     }
 
     void load(QJsonObject const &j) override
     {
-        m_conversionIndex = j["conversionIndex"].toInt(0);
+        m_inputCS = static_cast<ColorSpace>(j["inputIndex"].toInt(0));
+        m_outputIndex = j["outputIndex"].toInt(0);
     }
 
     QWidget *embeddedWidget() override
@@ -74,21 +154,64 @@ public:
             auto *layout = new QVBoxLayout(m_widget);
             layout->setContentsMargins(4, 4, 4, 4);
 
-            m_combo = new QComboBox();
-            m_combo->addItems({"Grayscale", "HSV", "Lab"});
-            m_combo->setCurrentIndex(m_conversionIndex);
-            layout->addWidget(m_combo);
+            m_inputCombo = new QComboBox();
+            for (int i = 0; i < colorSpaceCount(); ++i)
+                m_inputCombo->addItem(colorSpaceName(static_cast<ColorSpace>(i)));
+            m_inputCombo->setCurrentIndex(static_cast<int>(m_inputCS));
+            layout->addWidget(m_inputCombo);
 
-            m_timeLabel = new QLabel("— ms");
+            m_outputCombo = new QComboBox();
+            rebuildOutputCombo();
+            layout->addWidget(m_outputCombo);
+
+            m_timeLabel = new QLabel("\u2014 ms");
             m_timeLabel->setStyleSheet("color: #aaa; font-size: 10px;");
             layout->addWidget(m_timeLabel);
 
-            connect(m_combo, &QComboBox::currentIndexChanged, this, [this]() { process(); });
+            connect(m_inputCombo, &QComboBox::currentIndexChanged, this, [this](int idx) {
+                m_inputCS = static_cast<ColorSpace>(idx);
+                rebuildOutputCombo();
+                process();
+            });
+            connect(m_outputCombo, &QComboBox::currentIndexChanged, this, [this]() { process(); });
         }
         return m_widget;
     }
 
+    Q_INVOKABLE void refreshWidgets()
+    {
+        if (m_inputCombo)
+            m_inputCombo->setCurrentIndex(static_cast<int>(m_inputCS));
+        rebuildOutputCombo();
+    }
+
 private:
+    ColorSpace selectedOutputCS() const
+    {
+        if (!m_outputCombo || m_outputCombo->count() == 0)
+            return m_inputCS; // fallback: identity
+        QString name = m_outputCombo->currentText();
+        for (int i = 0; i < colorSpaceCount(); ++i) {
+            auto cs = static_cast<ColorSpace>(i);
+            if (name == colorSpaceName(cs))
+                return cs;
+        }
+        return m_inputCS;
+    }
+
+    void rebuildOutputCombo()
+    {
+        if (!m_outputCombo) return;
+        m_outputCombo->blockSignals(true);
+        m_outputCombo->clear();
+        m_outputCombo->addItems(validTargets(m_inputCS));
+        if (m_outputIndex >= 0 && m_outputIndex < m_outputCombo->count())
+            m_outputCombo->setCurrentIndex(m_outputIndex);
+        else if (m_outputCombo->count() > 0)
+            m_outputCombo->setCurrentIndex(0);
+        m_outputCombo->blockSignals(false);
+    }
+
     void process()
     {
         if (!m_input || m_input->image().isNull()) {
@@ -97,22 +220,29 @@ private:
             return;
         }
 
+        ColorSpace outCS = selectedOutputCS();
+
+        // Pass-through if same space
+        if (m_inputCS == outCS) {
+            m_output = m_input;
+            Q_EMIT dataUpdated(0);
+            return;
+        }
+
         {
             ScopeStageTimer t(caption(), "process");
 #ifdef NODDLE_WITH_OPENCV
-            cv::Mat src = qImageToMat(m_input->image());
-            cv::Mat dst;
-            int code = cv::COLOR_RGB2GRAY;
-            int idx = m_combo ? m_combo->currentIndex() : m_conversionIndex;
-            switch (idx) {
-            case 0: code = cv::COLOR_RGB2GRAY; break;
-            case 1: code = cv::COLOR_RGB2HSV; break;
-            case 2: code = cv::COLOR_RGB2Lab; break;
+            int code = cvtColorCode(m_inputCS, outCS);
+            if (code < 0) {
+                m_output = m_input;
+            } else {
+                cv::Mat src = qImageToMat(m_input->image());
+                cv::Mat dst;
+                cv::cvtColor(src, dst, code);
+                m_output = std::make_shared<ImageData>(matToQImage(dst), outCS);
             }
-            cv::cvtColor(src, dst, code);
-            m_output = std::make_shared<ImageData>(matToQImage(dst));
 #else
-            m_output = m_input;
+            m_output = std::make_shared<ImageData>(m_input->image(), outCS);
 #endif
         }
         if (m_timeLabel) {
@@ -125,9 +255,11 @@ private:
     }
 
     QWidget *m_widget = nullptr;
-    QComboBox *m_combo = nullptr;
+    QComboBox *m_inputCombo = nullptr;
+    QComboBox *m_outputCombo = nullptr;
     QLabel *m_timeLabel = nullptr;
-    int m_conversionIndex = 0;
+    ColorSpace m_inputCS = ColorSpace::RGB;
+    int m_outputIndex = 0;
     std::shared_ptr<ImageData> m_input;
     std::shared_ptr<ImageData> m_output;
 };

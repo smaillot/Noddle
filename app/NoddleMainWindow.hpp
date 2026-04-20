@@ -33,6 +33,7 @@ private slots:
     void onSaveFileAs();
     void onSceneModified();
     void onOpenRecent();
+    void onBenchmarkPipeline();
 
 private:
     void setupMenus();

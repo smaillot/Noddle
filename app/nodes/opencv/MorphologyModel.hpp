@@ -127,7 +127,7 @@ private:
             default: dst = src; break;
             }
 
-            m_output = std::make_shared<ImageData>(matToQImage(dst));
+            m_output = std::make_shared<ImageData>(matToQImage(dst), m_input->colorSpace());
 #else
             m_output = m_input;
 #endif

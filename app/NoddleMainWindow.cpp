@@ -15,6 +15,7 @@
 #include <QFileDialog>
 #include <QClipboard>
 #include <QFileInfo>
+#include <QInputDialog>
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -22,6 +23,7 @@
 #include <QMenuBar>
 #include <QMessageBox>
 #include <QMimeData>
+#include <QProgressDialog>
 #include <QSettings>
 #include <QStatusBar>
 #include <QUndoCommand>
@@ -263,9 +265,18 @@ NoddleMainWindow::NoddleMainWindow(QWidget *parent)
     connect(m_statusTimer, &QTimer::timeout, this, [this]() {
         double ms = PipelineProfiler::instance().totalPipelineMs(
             PipelineProfiler::StatType::Avg, PipelineProfiler::TimeWindow::Sec1);
-        double fps = (ms > 0.01) ? 1000.0 / ms : 0.0;
-        m_pipelineTimeLabel->setText(
-            QString("Pipeline: %1 ms (%2 fps)").arg(ms, 0, 'f', 2).arg(fps, 0, 'f', 1));
+        if (ms < 0.01) {
+            m_pipelineTimeLabel->setText(QStringLiteral("Pipeline: \u2014"));
+        } else {
+            // Show FPS only if a camera source is actively producing frames
+            double camFps = PipelineProfiler::instance().fps(QStringLiteral("Camera Source"));
+            if (camFps > 0.1)
+                m_pipelineTimeLabel->setText(
+                    QString("Pipeline: %1 ms (%2 fps)").arg(ms, 0, 'f', 2).arg(camFps, 0, 'f', 1));
+            else
+                m_pipelineTimeLabel->setText(
+                    QString("Pipeline: %1 ms").arg(ms, 0, 'f', 2));
+        }
     });
     m_statusTimer->start();
 
@@ -437,6 +448,16 @@ void NoddleMainWindow::setupMenus()
         redock(m_timelineView);
     });
     redockAll->setShortcut(QKeySequence(Qt::CTRL | Qt::SHIFT | Qt::Key_D));
+
+    // --- Pipeline menu ---
+    auto *pipelineMenu = menuBar()->addMenu(tr("&Pipeline"));
+
+    pipelineMenu->addAction(tr("&Benchmark…"), this, &NoddleMainWindow::onBenchmarkPipeline);
+
+    auto *clearProfiler = pipelineMenu->addAction(tr("&Clear Profiler"), this, []() {
+        PipelineProfiler::instance().clear();
+    });
+    Q_UNUSED(clearProfiler)
 }
 
 void NoddleMainWindow::setupStatusBar()
@@ -733,4 +754,79 @@ void NoddleMainWindow::onOpenRecent()
         return;
 
     loadFromFile(filePath);
+}
+
+void NoddleMainWindow::onBenchmarkPipeline()
+{
+    using QtNodes::NodeDelegateModel;
+    using QtNodes::NodeId;
+    using QtNodes::PortType;
+    using QtNodes::PortIndex;
+    using QtNodes::PortRole;
+
+    // Collect source nodes with data
+    auto allIds = m_graphModel->allNodeIds();
+    struct SourcePort {
+        NodeId nodeId;
+        PortIndex port;
+    };
+    QVector<SourcePort> sources;
+
+    for (auto nodeId : allIds) {
+        auto *model = m_graphModel->delegateModel<NodeDelegateModel>(nodeId);
+        if (!model || model->nPorts(PortType::In) > 0)
+            continue;
+        for (unsigned int p = 0; p < model->nPorts(PortType::Out); ++p) {
+            auto data = model->outData(p);
+            if (data)
+                sources.append({nodeId, p});
+        }
+    }
+
+    if (sources.isEmpty()) {
+        QMessageBox::information(this, tr("Benchmark"),
+                                 tr("No source nodes with data found.\n"
+                                    "Load an image or connect a source first."));
+        return;
+    }
+
+    bool ok = false;
+    int iterations = QInputDialog::getInt(
+        this, tr("Benchmark Pipeline"),
+        tr("Number of iterations:"), 100, 1, 10000, 1, &ok);
+    if (!ok)
+        return;
+
+    PipelineProfiler::instance().clear();
+
+    QProgressDialog progress(tr("Benchmarking…"), tr("Cancel"), 0, iterations, this);
+    progress.setWindowModality(Qt::WindowModal);
+    progress.setMinimumDuration(0);
+
+    for (int i = 0; i < iterations; ++i) {
+        if (progress.wasCanceled())
+            break;
+
+        for (auto const &sp : sources) {
+            auto conns = m_graphModel->connections(sp.nodeId, PortType::Out, sp.port);
+            QVariant portDataVar = m_graphModel->portData(
+                sp.nodeId, PortType::Out, sp.port, PortRole::Data);
+            for (auto const &cn : conns) {
+                m_graphModel->setPortData(cn.inNodeId, PortType::In,
+                                          cn.inPortIndex, portDataVar, PortRole::Data);
+            }
+        }
+
+        progress.setValue(i + 1);
+    }
+
+    progress.close();
+
+    double totalMs = PipelineProfiler::instance().totalPipelineMs(
+        PipelineProfiler::StatType::Avg, PipelineProfiler::TimeWindow::AllTime);
+
+    QMessageBox::information(this, tr("Benchmark Results"),
+                             tr("Iterations: %1\nAvg pipeline time: %2 ms")
+                                 .arg(iterations)
+                                 .arg(totalMs, 0, 'f', 2));
 }

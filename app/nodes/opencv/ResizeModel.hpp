@@ -120,12 +120,12 @@ private:
             int w = m_widthSpin ? m_widthSpin->value() : m_width;
             int h = m_heightSpin ? m_heightSpin->value() : m_height;
             cv::resize(src, dst, cv::Size(w, h));
-            m_output = std::make_shared<ImageData>(matToQImage(dst));
+            m_output = std::make_shared<ImageData>(matToQImage(dst), m_input->colorSpace());
 #else
             int w = m_widthSpin ? m_widthSpin->value() : m_width;
             int h = m_heightSpin ? m_heightSpin->value() : m_height;
             m_output = std::make_shared<ImageData>(
-                m_input->image().scaled(w, h));
+                m_input->image().scaled(w, h), m_input->colorSpace());
 #endif
         }
         if (m_timeLabel) {

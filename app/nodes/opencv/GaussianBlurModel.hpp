@@ -107,7 +107,7 @@ private:
             cv::Mat dst;
             int k = (m_kernelSpin ? m_kernelSpin->value() : m_kernelSize) | 1;
             cv::GaussianBlur(src, dst, cv::Size(k, k), 0);
-            m_output = std::make_shared<ImageData>(matToQImage(dst));
+            m_output = std::make_shared<ImageData>(matToQImage(dst), m_input->colorSpace());
 #else
             m_output = m_input;
 #endif

@@ -122,7 +122,7 @@ private:
             int lo = m_lowSpin ? m_lowSpin->value() : m_lowThresh;
             int hi = m_highSpin ? m_highSpin->value() : m_highThresh;
             cv::Canny(gray, dst, lo, hi);
-            m_output = std::make_shared<ImageData>(matToQImage(dst));
+            m_output = std::make_shared<ImageData>(matToQImage(dst), ColorSpace::Grayscale);
 #else
             m_output = m_input;
 #endif

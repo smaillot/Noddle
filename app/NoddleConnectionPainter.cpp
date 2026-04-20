@@ -138,7 +138,11 @@ QString NoddleConnectionPainter::detailedLabel(
     // Extract type-specific metadata
     if (auto *img = dynamic_cast<ImageData const *>(nodeData.get())) {
         QSize s = img->image().size();
-        label += QString(" %1\u00D7%2").arg(s.width()).arg(s.height());
+        label += QString(" %1\u00D7%2\u00D7%3 %4")
+            .arg(s.width())
+            .arg(s.height())
+            .arg(img->channels())
+            .arg(colorSpaceName(img->colorSpace()));
     } else if (auto *tbl = dynamic_cast<TableData const *>(nodeData.get())) {
         label += QString(" %1\u00D7%2").arg(tbl->rowCount()).arg(tbl->colCount());
     } else if (auto *pc = dynamic_cast<PointCloudData const *>(nodeData.get())) {
