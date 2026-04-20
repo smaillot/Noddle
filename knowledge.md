@@ -102,6 +102,33 @@
 - Patterns retenus de Starling: génération C++ depuis graphe.
 - Patterns retenus de dev.to: searchbox critique, pins dynamiques, gestion cyclique, side-effects marqués.
 
+## Phase 4A — Async Execution Engine (2026-04-20)
+- `app/engine/GraphSchedule.hpp/.cpp`: topological schedule builder using Kahn's BFS on `DataFlowGraphModel`. Produces `ExecutionLevel` groups, source node list, adjacency map.
+- `app/engine/FrameDispatcher.hpp`: header-only, lock-free back-pressure controller with 3 policies: DropFrame, Downsample, Pause. Uses `std::atomic` for thread-safe in-flight tracking.
+- `GraphSchedule.cpp` added to both `app/CMakeLists.txt` (APP_SOURCES) and `tests/CMakeLists.txt` (test linkage).
+- 20 new engine tests (10 schedule + 10 dispatcher), all passing. Total: 76 tests.
+- `app/engine/PipelineExecutor.hpp/.cpp`: async wavefront executor orchestrating pipeline off UI thread.
+  - Freezes all nodes via `setFrozenState(true)` to block QtNodes native propagation.
+  - Connects to source nodes' `dataUpdated` signals; checks backpressure via `FrameDispatcher::acceptFrame()`.
+  - Wavefront: level 0 = sources (skip), levels 1..N dispatched via `QtConcurrent::run` on `QThreadPool`.
+  - Per-level barrier: single-node levels run inline, multi-node levels run parallel with `waitForFinished`.
+  - UI refresh posted back via `QMetaObject::invokeMethod(Qt::QueuedConnection)`.
+  - `refreshNodeWidgets(nodeId)` calls `Q_INVOKABLE refreshWidgets()` via meta-call (silently no-ops if absent).
+  - Topology change signals (`connectionCreated/Deleted`, `nodeCreated/Deleted`) trigger `rebuildSchedule()`.
+  - `stop()` waits for in-flight work, disconnects all signals, unfreezes nodes.
+  - Added to `app/CMakeLists.txt` (APP_SOURCES).
+
+### Phase 4A — Code Review Thread-Safety Fixes (2026-04-20)
+- C1: `m_running`, `m_paused` changed from `bool` to `std::atomic<bool>` (data race on worker reads).
+- C2: `m_delegates` cache — delegate pointers snapshotted at `start()`/`rebuildSchedule()`, worker threads use cache instead of `DataFlowGraphModel::delegateModel<>()` (map access data race).
+- C3: All 6 OpenCV models' `Q_EMIT dataUpdated(0)` guarded with `if (!frozen())` — prevents triggering `DataFlowGraphModel::onOutPortDataUpdated()` from worker threads.
+  - Guards applied in both `setInData()` (null/mismatch early returns) and `process()` (null guard + final emit).
+  - `refreshWidgets()` call also guarded inside the same `if (!frozen())` block (avoids double refresh — M2 fix).
+- C4: `m_inFlight` atomic — set before dispatching wavefront, cleared on UI callback. `rebuildSchedule()` defers (sets `m_scheduleStale`) if in-flight, rebuilds when wavefront completes.
+- H1: `GraphSchedule::incomingEdges` reverse adjacency map — workers use pre-built edges instead of re-querying `allConnectionIds()`.
+- H2: `m_generation` counter — incremented on `start()` and `stop()`, captured by wavefront lambda. UI callback checks `generation != m_generation` to discard stale completions.
+- `cacheDelegates()` method: iterates `allNodeIds()` on UI thread, stores `NodeDelegateModel*` in `m_delegates` map.
+
 ### Revised Feature Roadmap
 - **Phase 1 (Priorité)**: Vrai node editor graphique Qt, searchbox, sérialisation JSON, auto-inférence types.
 - **Phase 2**: Source caméra live, preview par nœud, overload strategies production, bibliothèque OpenCV étendue.
@@ -281,3 +308,20 @@
   - ImageDisplayModel: `dynamic_pointer_cast` moved after null check
   - All OpenCV `process()` methods: widget null guards with backing field fallback
   - Pattern: `m_spin ? m_spin->value() : m_backingField` for all widget reads in `process()`
+
+### Phase 4A — Async Node Adaptation + Pipeline Menu (2026-04-20)
+- All 6 OpenCV models + ImageDisplayModel adapted for async execution (thread-safe `setInData()`):
+  - Widget-touching code (QLabel setText, QPixmap setPixmap) moved from `process()` / `setInData()` to `Q_INVOKABLE void refreshWidgets()`.
+  - `refreshWidgets()` called by PipelineExecutor on UI thread after wavefront completion.
+  - `process()` ends with `QMetaObject::invokeMethod(this, "refreshWidgets", Qt::QueuedConnection)` — works in both interactive and async modes.
+  - ImageDisplayModel: `setInData()` no longer touches widgets; data storage + validation only. `refreshWidgets()` handles pixmap + time label.
+- CameraSourceModel: no change needed — already handles threading via `QMetaObject::invokeMethod` in worker thread.
+- **Pipeline menu** added to NoddleMainWindow (`setupMenus()`):
+  - Run (F5): starts PipelineExecutor, freezes nodes, enables Stop/Pause.
+  - Stop (Shift+F5): stops executor, unfreezes nodes, resets menu state.
+  - Pause (F6): toggleable, pauses executor wavefront dispatching.
+  - `stopped` signal from executor resets menu state automatically.
+- **PipelineExecutor integration** in NoddleMainWindow:
+  - `m_executor` member, created in constructor after `setupMenus()`.
+  - `nodeOutputReady` signal connected to `PreviewPanel::refreshForNode()` for async preview refresh.
+- **PreviewPanel**: `refreshForNode(NodeId)` public method — refreshes preview if nodeId matches selected node.

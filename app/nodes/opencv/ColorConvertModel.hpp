@@ -106,13 +106,13 @@ public:
         if (!data) {
             setValidationState({QtNodes::NodeValidationState::State::Warning, "Missing input"});
             m_output.reset();
-            Q_EMIT dataUpdated(0);
+            if (!frozen()) Q_EMIT dataUpdated(0);
             return;
         }
         if (!m_input) {
             setValidationState({QtNodes::NodeValidationState::State::Error, "Type mismatch"});
             m_output.reset();
-            Q_EMIT dataUpdated(0);
+            if (!frozen()) Q_EMIT dataUpdated(0);
             return;
         }
         setValidationState({QtNodes::NodeValidationState::State::Valid, ""});
@@ -183,6 +183,12 @@ public:
         if (m_inputCombo)
             m_inputCombo->setCurrentIndex(static_cast<int>(m_inputCS));
         rebuildOutputCombo();
+        if (m_timeLabel) {
+            double ms = PipelineProfiler::instance().stat(
+                caption(), "process",
+                PipelineProfiler::StatType::Avg, PipelineProfiler::TimeWindow::Sec1);
+            m_timeLabel->setText(QString("%1 ms").arg(ms, 0, 'f', 2));
+        }
     }
 
 private:
@@ -216,7 +222,7 @@ private:
     {
         if (!m_input || m_input->image().isNull()) {
             m_output.reset();
-            Q_EMIT dataUpdated(0);
+            if (!frozen()) Q_EMIT dataUpdated(0);
             return;
         }
 
@@ -225,7 +231,7 @@ private:
         // Pass-through if same space
         if (m_inputCS == outCS) {
             m_output = m_input;
-            Q_EMIT dataUpdated(0);
+            if (!frozen()) Q_EMIT dataUpdated(0);
             return;
         }
 
@@ -245,13 +251,10 @@ private:
             m_output = std::make_shared<ImageData>(m_input->image(), outCS);
 #endif
         }
-        if (m_timeLabel) {
-            double ms = PipelineProfiler::instance().stat(
-                caption(), "process",
-                PipelineProfiler::StatType::Avg, PipelineProfiler::TimeWindow::Sec1);
-            m_timeLabel->setText(QString("%1 ms").arg(ms, 0, 'f', 2));
+        if (!frozen()) {
+            Q_EMIT dataUpdated(0);
+            QMetaObject::invokeMethod(this, "refreshWidgets", Qt::QueuedConnection);
         }
-        Q_EMIT dataUpdated(0);
     }
 
     QWidget *m_widget = nullptr;

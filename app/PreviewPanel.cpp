@@ -145,3 +145,9 @@ void PreviewPanel::onUpdateFpsLabel()
     else
         m_fpsLabel->setText(QStringLiteral("FPS: \u2014"));
 }
+
+void PreviewPanel::refreshForNode(NodeId nodeId)
+{
+    if (nodeId == m_selectedNodeId)
+        refreshPreview();
+}

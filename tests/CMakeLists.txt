@@ -10,8 +10,8 @@ FetchContent_MakeAvailable(Catch2)
 
 list(APPEND CMAKE_MODULE_PATH ${catch2_SOURCE_DIR}/extras)
 
-# Qt6::Core needed for widget tests (PipelineProfiler, FpsCounter, ProcessingTimer)
-find_package(Qt6 REQUIRED COMPONENTS Core)
+# Qt6::Core and Widgets needed for widget and engine tests
+find_package(Qt6 REQUIRED COMPONENTS Core Widgets)
 set(CMAKE_AUTOMOC ON)
 
 add_executable(noddle_tests
@@ -20,13 +20,18 @@ add_executable(noddle_tests
     test_source_nodes.cpp
     test_runtime.cpp
     test_widgets.cpp
-    # Listed explicitly so AUTOMOC generates moc for Q_OBJECT in PipelineProfiler
+    test_engine.cpp
+    # Listed explicitly so AUTOMOC generates moc for Q_OBJECT macros
     ${CMAKE_SOURCE_DIR}/app/widgets/PipelineProfiler.hpp
+    DummyModels.hpp
+    # Engine sources needed by test_engine.cpp
+    ${CMAKE_SOURCE_DIR}/app/engine/GraphSchedule.cpp
 )
 
 target_include_directories(noddle_tests
     PRIVATE
         ${CMAKE_SOURCE_DIR}/app/widgets
+        ${CMAKE_SOURCE_DIR}/app
 )
 
 target_link_libraries(noddle_tests
@@ -34,11 +39,43 @@ target_link_libraries(noddle_tests
         Catch2::Catch2WithMain
         noddle_core
         Qt6::Core
+        Qt6::Widgets
+        QtNodes::QtNodes
 )
 
 include(CTest)
 include(Catch)
 catch_discover_tests(noddle_tests)
+
+# ── Integration tests (need QCoreApplication event loop) ─────────
+
+find_package(Qt6 REQUIRED COMPONENTS Test Concurrent)
+
+add_executable(noddle_integration_tests
+    test_integration_engine.cpp
+    DummyModels.hpp
+    ${CMAKE_SOURCE_DIR}/app/engine/GraphSchedule.cpp
+    ${CMAKE_SOURCE_DIR}/app/engine/PipelineExecutor.cpp
+)
+
+target_include_directories(noddle_integration_tests
+    PRIVATE
+        ${CMAKE_SOURCE_DIR}/app
+        ${CMAKE_SOURCE_DIR}/app/widgets
+)
+
+target_link_libraries(noddle_integration_tests
+    PRIVATE
+        Catch2::Catch2
+        noddle_core
+        Qt6::Core
+        Qt6::Widgets
+        Qt6::Test
+        Qt6::Concurrent
+        QtNodes::QtNodes
+)
+
+catch_discover_tests(noddle_integration_tests)
 
 # Run tests automatically after build
 add_custom_command(

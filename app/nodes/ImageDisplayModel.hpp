@@ -29,42 +29,20 @@ public:
 
     void setInData(std::shared_ptr<QtNodes::NodeData> data, QtNodes::PortIndex) override
     {
-        // Ensure widget is created
-        embeddedWidget();
-
         if (!data) {
             setValidationState({QtNodes::NodeValidationState::State::Warning, "No input image"});
             m_receivedData.reset();
-            if (m_preview)
-                m_preview->setText("No image");
+            QMetaObject::invokeMethod(this, "refreshWidgets", Qt::QueuedConnection);
             return;
         }
         m_receivedData = std::dynamic_pointer_cast<ImageData>(data);
         if (!m_receivedData) {
             setValidationState({QtNodes::NodeValidationState::State::Error, "Type mismatch"});
-            if (m_preview)
-                m_preview->setText("No image");
+            QMetaObject::invokeMethod(this, "refreshWidgets", Qt::QueuedConnection);
             return;
         }
         setValidationState({QtNodes::NodeValidationState::State::Valid, ""});
-
-        if (!m_receivedData->image().isNull()) {
-            {
-                ScopeStageTimer t(caption(), "display");
-                QImage scaled = m_receivedData->image().scaled(
-                    200, 150, Qt::KeepAspectRatio, Qt::FastTransformation);
-                m_preview->setPixmap(QPixmap::fromImage(scaled));
-            }
-            if (m_timeLabel) {
-                double ms = PipelineProfiler::instance().stat(
-                    caption(), "display",
-                    PipelineProfiler::StatType::Avg, PipelineProfiler::TimeWindow::Sec1);
-                m_timeLabel->setText(QString("%1 ms").arg(ms, 0, 'f', 2));
-            }
-        } else {
-            if (m_preview)
-                m_preview->setText("No image");
-        }
+        QMetaObject::invokeMethod(this, "refreshWidgets", Qt::QueuedConnection);
     }
 
     // Return received data so PreviewPanel can display sink nodes
@@ -94,6 +72,29 @@ public:
             layout->addWidget(m_timeLabel);
         }
         return m_widget;
+    }
+
+    Q_INVOKABLE void refreshWidgets()
+    {
+        embeddedWidget();
+
+        if (!m_receivedData || m_receivedData->image().isNull()) {
+            if (m_preview)
+                m_preview->setText("No image");
+            return;
+        }
+        {
+            ScopeStageTimer t(caption(), "display");
+            QImage scaled = m_receivedData->image().scaled(
+                200, 150, Qt::KeepAspectRatio, Qt::FastTransformation);
+            m_preview->setPixmap(QPixmap::fromImage(scaled));
+        }
+        if (m_timeLabel) {
+            double ms = PipelineProfiler::instance().stat(
+                caption(), "display",
+                PipelineProfiler::StatType::Avg, PipelineProfiler::TimeWindow::Sec1);
+            m_timeLabel->setText(QString("%1 ms").arg(ms, 0, 'f', 2));
+        }
     }
 
 private:

@@ -15,6 +15,8 @@ class QTimer;
 class PreviewPanel;
 class TimelineView;
 
+namespace noddle { class PipelineExecutor; }
+
 class NoddleMainWindow : public QMainWindow
 {
     Q_OBJECT
@@ -53,6 +55,8 @@ private:
     QtNodes::GraphicsView *m_graphicsView;
     PreviewPanel *m_previewPanel;
     TimelineView *m_timelineView;
+
+    noddle::PipelineExecutor *m_executor = nullptr;
 
     QLabel *m_pipelineTimeLabel = nullptr;
     QTimer *m_statusTimer = nullptr;

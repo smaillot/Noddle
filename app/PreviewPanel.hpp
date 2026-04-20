@@ -22,6 +22,8 @@ public:
     explicit PreviewPanel(QtNodes::DataFlowGraphModel &graphModel,
                           QWidget *parent = nullptr);
 
+    void refreshForNode(QtNodes::NodeId nodeId);
+
 public slots:
     void onNodeSelected(QtNodes::NodeId nodeId);
 
