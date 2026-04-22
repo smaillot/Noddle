@@ -1,6 +1,7 @@
 #include "plugins/PythonPluginRuntime.hpp"
 
 #include <QByteArray>
+#include <QDir>
 #include <QFileInfo>
 #include <QMutex>
 #include <QMutexLocker>
@@ -194,10 +195,12 @@ PythonPluginRuntime::~PythonPluginRuntime()
 {
 #ifdef NODDLE_WITH_PYTHON_PLUGIN
     QMutexLocker lock(&pythonMutex());
+    PyGILState_STATE gil = PyGILState_Ensure();
     if (m_impl && m_impl->module) {
         Py_DECREF(m_impl->module);
         m_impl->module = nullptr;
     }
+    PyGILState_Release(gil);
     delete m_impl;
     m_impl = nullptr;
 #endif
@@ -215,6 +218,7 @@ bool PythonPluginRuntime::isAvailable() const
 bool PythonPluginRuntime::setPluginFile(QString const &filePath, QString &error)
 {
     error.clear();
+    m_pluginId.clear();
     m_pluginName.clear();
     m_paramSpecs.clear();
 
@@ -280,6 +284,7 @@ bool PythonPluginRuntime::setPluginFile(QString const &filePath, QString &error)
     if (!pluginSpecFn || !PyCallable_Check(pluginSpecFn)) {
         Py_XDECREF(pluginSpecFn);
         error = QStringLiteral("Plugin contract error: missing callable plugin_spec()");
+        PyErr_Clear();
         Py_DECREF(globals);
         Py_DECREF(locals);
         PyGILState_Release(gil);
@@ -291,6 +296,7 @@ bool PythonPluginRuntime::setPluginFile(QString const &filePath, QString &error)
         Py_XDECREF(processFn);
         Py_DECREF(pluginSpecFn);
         error = QStringLiteral("Plugin contract error: missing callable process(...)");
+        PyErr_Clear();
         Py_DECREF(globals);
         Py_DECREF(locals);
         PyGILState_Release(gil);
@@ -298,8 +304,17 @@ bool PythonPluginRuntime::setPluginFile(QString const &filePath, QString &error)
     }
 
     PyObject *specObj = PyObject_CallObject(pluginSpecFn, nullptr);
-    if (!specObj || !PyDict_Check(specObj)) {
-        Py_XDECREF(specObj);
+    if (!specObj) {
+        Py_DECREF(processFn);
+        Py_DECREF(pluginSpecFn);
+        error = QStringLiteral("Plugin contract error: plugin_spec() raised: %1").arg(pyErrorToString());
+        Py_DECREF(globals);
+        Py_DECREF(locals);
+        PyGILState_Release(gil);
+        return false;
+    }
+    if (!PyDict_Check(specObj)) {
+        Py_DECREF(specObj);
         Py_DECREF(processFn);
         Py_DECREF(pluginSpecFn);
         error = QStringLiteral("Plugin contract error: plugin_spec() must return dict");
@@ -338,6 +353,12 @@ bool PythonPluginRuntime::setPluginFile(QString const &filePath, QString &error)
         m_pluginName = QString::fromUtf8(PyUnicode_AsUTF8(nameObj));
     else
         m_pluginName = fi.baseName();
+
+    PyObject *idObj = PyDict_GetItemString(specObj, "id");
+    if (idObj && PyUnicode_Check(idObj))
+        m_pluginId = QString::fromUtf8(PyUnicode_AsUTF8(idObj));
+    else
+        m_pluginId = fi.baseName();
 
     QVector<PythonPluginParamSpec> parsedSpecs;
     if (!parseParamSpecs(PyDict_GetItemString(specObj, "params"), parsedSpecs, error)) {
@@ -534,6 +555,35 @@ std::optional<ImageData> PythonPluginRuntime::process(ImageData const &input,
 
     return ImageData(out, parseColorSpace(colorStr));
 #endif
+}
+
+QVector<PluginDescriptor> PythonPluginRuntime::scanDirectory(QString const &dirPath)
+{
+    QVector<PluginDescriptor> result;
+
+#ifdef NODDLE_WITH_PYTHON_PLUGIN
+    QDir dir(dirPath);
+    if (!dir.exists())
+        return result;
+
+    QStringList pyFiles = dir.entryList(QStringList() << QStringLiteral("*.py"), QDir::Files);
+    for (auto const &fileName : pyFiles) {
+        QString fullPath = dir.absoluteFilePath(fileName);
+        PythonPluginRuntime probe;
+        QString err;
+        if (!probe.setPluginFile(fullPath, err))
+            continue;
+        PluginDescriptor desc;
+        desc.id = probe.pluginId();
+        desc.name = probe.pluginName();
+        desc.filePath = fullPath;
+        result.append(desc);
+    }
+#else
+    Q_UNUSED(dirPath)
+#endif
+
+    return result;
 }
 
 } // namespace noddle

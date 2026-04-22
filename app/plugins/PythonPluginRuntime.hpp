@@ -11,6 +11,12 @@
 
 namespace noddle {
 
+struct PluginDescriptor {
+    QString id;
+    QString name;
+    QString filePath;
+};
+
 enum class PythonPluginParamType {
     Integer,
     Double,
@@ -42,11 +48,14 @@ public:
     bool setPluginFile(QString const &filePath, QString &error);
     QString pluginFile() const { return m_pluginFile; }
     QString pluginName() const { return m_pluginName; }
+    QString pluginId() const { return m_pluginId; }
     QVector<PythonPluginParamSpec> parameterSpecs() const { return m_paramSpecs; }
     QVariantMap defaultParameters() const;
 
     std::optional<ImageData> process(ImageData const &input, QString &error);
     std::optional<ImageData> process(ImageData const &input, QVariantMap const &params, QString &error);
+
+    static QVector<PluginDescriptor> scanDirectory(QString const &dirPath);
 
 private:
 #ifdef NODDLE_WITH_PYTHON_PLUGIN
@@ -55,6 +64,7 @@ private:
 #endif
 
     QString m_pluginFile;
+    QString m_pluginId;
     QString m_pluginName;
     QVector<PythonPluginParamSpec> m_paramSpecs;
 };

@@ -3,8 +3,10 @@
 #include <QtNodes/NodeDelegateModel>
 
 #include <QCheckBox>
-#include <QFileDialog>
+#include <QComboBox>
+#include <QDir>
 #include <QDoubleSpinBox>
+#include <QFileDialog>
 #include <QFormLayout>
 #include <QHBoxLayout>
 #include <QJsonObject>
@@ -12,6 +14,7 @@
 #include <QLineEdit>
 #include <QPushButton>
 #include <QSpinBox>
+#include <QStandardPaths>
 #include <QVariantMap>
 #include <QVBoxLayout>
 
@@ -64,6 +67,9 @@ public:
     QJsonObject save() const override
     {
         auto j = NodeDelegateModel::save();
+        j["pluginFolderPath"] = m_pluginFolderPath;
+        j["selectedPluginId"] = m_selectedPluginId;
+        // Keep legacy pluginPath for direct-file load compatibility
         j["pluginPath"] = m_pluginPath;
         j["params"] = QJsonObject::fromVariantMap(m_paramValues);
         return j;
@@ -71,8 +77,18 @@ public:
 
     void load(QJsonObject const &j) override
     {
-        m_pluginPath = j["pluginPath"].toString();
+        m_pluginFolderPath = j["pluginFolderPath"].toString();
+        m_selectedPluginId = j["selectedPluginId"].toString();
+        // Legacy: direct plugin path (from previous save format)
+        if (m_pluginFolderPath.isEmpty())
+            m_pluginPath = j["pluginPath"].toString();
         m_paramValues = j["params"].toObject().toVariantMap();
+
+        // Refresh UI if widget was already created before load() was called
+        if (m_combo && !m_pluginFolderPath.isEmpty())
+            scanPlugins();
+        else if (m_combo && !m_pluginPath.isEmpty())
+            loadPlugin();
     }
 
     QWidget *embeddedWidget() override
@@ -82,18 +98,27 @@ public:
             auto *layout = new QVBoxLayout(m_widget);
             layout->setContentsMargins(4, 4, 4, 4);
 
-            auto *row = new QHBoxLayout();
-            m_pathEdit = new QLineEdit(m_pluginPath);
-            m_pathEdit->setPlaceholderText("Select .py plugin...");
-            auto *browse = new QPushButton("...");
-            browse->setFixedWidth(28);
-            row->addWidget(m_pathEdit);
-            row->addWidget(browse);
-            layout->addLayout(row);
+            // ── Folder row ──
+            auto *folderRow = new QHBoxLayout();
+            m_folderEdit = new QLineEdit(m_pluginFolderPath);
+            m_folderEdit->setPlaceholderText("Plugin folder...");
+            auto *browseFolder = new QPushButton("...");
+            browseFolder->setFixedWidth(28);
+            folderRow->addWidget(m_folderEdit);
+            folderRow->addWidget(browseFolder);
+            layout->addLayout(folderRow);
 
+            // ── Plugin combo ──
+            m_combo = new QComboBox();
+            m_combo->setObjectName("pluginCombo");
+            m_combo->addItem("(select a plugin)", QString());
+            layout->addWidget(m_combo);
+
+            // ── Param editors ──
             m_paramsLayout = new QFormLayout();
             layout->addLayout(m_paramsLayout);
 
+            // ── Status / timing ──
             m_statusLabel = new QLabel("No plugin loaded");
             m_statusLabel->setStyleSheet("color: #aaa; font-size: 10px;");
             layout->addWidget(m_statusLabel);
@@ -102,31 +127,41 @@ public:
             m_timeLabel->setStyleSheet("color: #aaa; font-size: 10px;");
             layout->addWidget(m_timeLabel);
 
-            connect(m_pathEdit, &QLineEdit::editingFinished, this, [this]() {
-                m_pluginPath = m_pathEdit->text().trimmed();
-                loadPlugin();
-                process();
+            connect(m_folderEdit, &QLineEdit::editingFinished, this, [this]() {
+                m_pluginFolderPath = m_folderEdit->text().trimmed();
+                scanPlugins();
             });
-            connect(browse, &QPushButton::clicked, this, [this]() {
-                QString fp = QFileDialog::getOpenFileName(
-                    nullptr, "Select Python Plugin", QString(), "Python Files (*.py)");
-                if (fp.isEmpty())
+            connect(browseFolder, &QPushButton::clicked, this, [this]() {
+                QString dir = QFileDialog::getExistingDirectory(
+                    nullptr, "Select Plugin Folder",
+                    m_pluginFolderPath.isEmpty() ? defaultPluginFolder() : m_pluginFolderPath);
+                if (dir.isEmpty())
                     return;
-                m_pluginPath = fp;
-                m_pathEdit->setText(fp);
+                m_pluginFolderPath = dir;
+                m_folderEdit->setText(dir);
+                scanPlugins();
+            });
+            connect(m_combo, &QComboBox::currentIndexChanged, this, [this](int index) {
+                QString filePath = m_combo->itemData(index).toString();
+                m_selectedPluginId = m_combo->itemData(index, Qt::UserRole + 1).toString();
+                m_pluginPath = filePath;
                 loadPlugin();
                 process();
             });
 
-            loadPlugin();
+            // Restore state after load()
+            if (!m_pluginFolderPath.isEmpty())
+                scanPlugins();
+            else if (!m_pluginPath.isEmpty())
+                loadPlugin(); // legacy: direct path support
         }
         return m_widget;
     }
 
     Q_INVOKABLE void refreshWidgets()
     {
-        if (m_pathEdit)
-            m_pathEdit->setText(m_pluginPath);
+        if (m_folderEdit)
+            m_folderEdit->setText(m_pluginFolderPath);
         if (m_statusLabel)
             m_statusLabel->setText(m_statusText);
         if (m_timeLabel) {
@@ -138,6 +173,44 @@ public:
     }
 
 private:
+    static QString defaultPluginFolder()
+    {
+        QString config = QStandardPaths::writableLocation(QStandardPaths::AppConfigLocation);
+        return QDir(config).absoluteFilePath(QStringLiteral("plugins"));
+    }
+
+    void scanPlugins()
+    {
+        auto descriptors = noddle::PythonPluginRuntime::scanDirectory(m_pluginFolderPath);
+
+        if (m_combo) {
+            // Block signals while rebuilding to avoid spurious loadPlugin() calls
+            QSignalBlocker blocker(m_combo);
+            m_combo->clear();
+            m_combo->addItem(QStringLiteral("(select a plugin)"), QString());
+            for (auto const &desc : descriptors) {
+                m_combo->addItem(desc.name.isEmpty() ? desc.id : desc.name, desc.filePath);
+                m_combo->setItemData(m_combo->count() - 1, desc.id, Qt::UserRole + 1);
+            }
+
+            // Re-select previously chosen plugin by id
+            if (!m_selectedPluginId.isEmpty()) {
+                for (int i = 1; i < m_combo->count(); ++i) {
+                    if (m_combo->itemData(i, Qt::UserRole + 1).toString() == m_selectedPluginId) {
+                        m_combo->setCurrentIndex(i);
+                        m_pluginPath = m_combo->itemData(i).toString();
+                        loadPlugin();
+                        return;
+                    }
+                }
+            }
+        }
+
+        // No plugin selected after scan
+        m_pluginPath.clear();
+        loadPlugin();
+    }
+
     void clearParamEditors()
     {
         if (!m_paramsLayout)
@@ -305,12 +378,15 @@ private:
 
     QWidget *m_widget = nullptr;
     QFormLayout *m_paramsLayout = nullptr;
-    QLineEdit *m_pathEdit = nullptr;
+    QLineEdit *m_folderEdit = nullptr;
+    QComboBox *m_combo = nullptr;
     QLabel *m_statusLabel = nullptr;
     QLabel *m_timeLabel = nullptr;
 
     noddle::PythonPluginRuntime m_runtime;
-    QString m_pluginPath;
+    QString m_pluginFolderPath;
+    QString m_selectedPluginId;
+    QString m_pluginPath;   // resolved absolute path of selected plugin
     QString m_statusText;
     bool m_pluginLoaded = false;
     QVariantMap m_paramValues;
