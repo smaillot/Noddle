@@ -128,3 +128,80 @@ TEST_CASE("PythonPluginRuntime — reports process exception", "[plugin][python]
     REQUIRE_FALSE(out.has_value());
     REQUIRE(err.contains("boom", Qt::CaseInsensitive));
 }
+
+// ──────────────────────────────────────────────
+// scanDirectory tests
+// ──────────────────────────────────────────────
+
+TEST_CASE("PythonPluginRuntime — scanDirectory returns empty for missing folder", "[plugin][python][scan][edge]")
+{
+    auto result = noddle::PythonPluginRuntime::scanDirectory("/tmp/__noddle_nonexistent_dir_xyz__");
+    REQUIRE(result.isEmpty());
+}
+
+TEST_CASE("PythonPluginRuntime — scanDirectory returns empty for empty folder", "[plugin][python][scan]")
+{
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+
+    auto result = noddle::PythonPluginRuntime::scanDirectory(dir.path());
+    REQUIRE(result.isEmpty());
+}
+
+TEST_CASE("PythonPluginRuntime — scanDirectory finds valid plugins", "[plugin][python][scan]")
+{
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+
+    writePluginFile(dir, "plugin_a.py",
+        "def plugin_spec():\n"
+        "    return {'api_version': '4b.image.v1', 'id': 'test.alpha', 'name': 'Alpha'}\n"
+        "def process(i, p, c): return i\n");
+
+    writePluginFile(dir, "plugin_b.py",
+        "def plugin_spec():\n"
+        "    return {'api_version': '4b.image.v1', 'id': 'test.beta', 'name': 'Beta'}\n"
+        "def process(i, p, c): return i\n");
+
+    auto result = noddle::PythonPluginRuntime::scanDirectory(dir.path());
+    REQUIRE(result.size() == 2);
+
+    // Check IDs are present (order may vary)
+    QStringList ids;
+    for (auto const &d : result)
+        ids << d.id;
+    REQUIRE(ids.contains("test.alpha"));
+    REQUIRE(ids.contains("test.beta"));
+
+    // Check name is populated
+    for (auto const &d : result)
+        REQUIRE_FALSE(d.name.isEmpty());
+
+    // Check filePath is valid
+    for (auto const &d : result)
+        REQUIRE(QFile::exists(d.filePath));
+}
+
+TEST_CASE("PythonPluginRuntime — scanDirectory ignores invalid plugin files", "[plugin][python][scan]")
+{
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+
+    // Valid plugin
+    writePluginFile(dir, "valid.py",
+        "def plugin_spec():\n"
+        "    return {'api_version': '4b.image.v1', 'id': 'test.valid', 'name': 'Valid'}\n"
+        "def process(i, p, c): return i\n");
+
+    // Python file without plugin_spec — invalid
+    writePluginFile(dir, "not_a_plugin.py",
+        "x = 42\n");
+
+    // Non-Python file — should be ignored
+    writePluginFile(dir, "readme.txt",
+        "This is not a plugin.\n");
+
+    auto result = noddle::PythonPluginRuntime::scanDirectory(dir.path());
+    REQUIRE(result.size() == 1);
+    REQUIRE(result.front().id == "test.valid");
+}
