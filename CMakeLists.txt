@@ -8,6 +8,7 @@ set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 
 # ── Options ──────────────────────────────────────────────────────
 option(NODDLE_WITH_OPENCV "Build with OpenCV nodes" OFF)
+option(NODDLE_WITH_PYTHON_PLUGIN "Build with Python custom plugin nodes" ON)
 option(NODDLE_BUILD_TESTS "Build unit tests (Catch2)" ON)
 
 # ── Core library ─────────────────────────────────────────────────

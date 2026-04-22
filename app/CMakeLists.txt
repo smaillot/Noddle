@@ -13,6 +13,9 @@ set(APP_SOURCES
     nodes/CsvSourceModel.hpp
     nodes/PointCloudSourceModel.hpp
     nodes/ImageDisplayModel.hpp
+    nodes/PythonPluginModel.hpp
+    plugins/PythonPluginRuntime.hpp
+    plugins/PythonPluginRuntime.cpp
     nodes/opencv/ColorConvertModel.hpp
     nodes/opencv/ResizeModel.hpp
     nodes/opencv/GaussianBlurModel.hpp
@@ -51,6 +54,16 @@ target_link_libraries(noddle_app
         QtNodes::QtNodes
         noddle_core
 )
+
+if(NODDLE_WITH_PYTHON_PLUGIN)
+    find_package(Python3 COMPONENTS Interpreter Development QUIET)
+    if(Python3_Development_FOUND)
+        target_compile_definitions(noddle_app PRIVATE NODDLE_WITH_PYTHON_PLUGIN)
+        target_link_libraries(noddle_app PRIVATE Python3::Python)
+    else()
+        message(WARNING "NODDLE_WITH_PYTHON_PLUGIN is ON but Python3 Development was not found; Python plugin node will be disabled")
+    endif()
+endif()
 
 if(NODDLE_WITH_OPENCV)
     find_package(OpenCV REQUIRED COMPONENTS core imgproc)

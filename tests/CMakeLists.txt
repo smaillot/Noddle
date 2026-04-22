@@ -19,6 +19,7 @@ add_executable(noddle_tests
     test_visualization_policy.cpp
     test_source_nodes.cpp
     test_runtime.cpp
+    test_python_plugin_runtime.cpp
     test_widgets.cpp
     test_engine.cpp
     # Listed explicitly so AUTOMOC generates moc for Q_OBJECT macros
@@ -26,6 +27,7 @@ add_executable(noddle_tests
     DummyModels.hpp
     # Engine sources needed by test_engine.cpp
     ${CMAKE_SOURCE_DIR}/app/engine/GraphSchedule.cpp
+    ${CMAKE_SOURCE_DIR}/app/plugins/PythonPluginRuntime.cpp
 )
 
 target_include_directories(noddle_tests
@@ -42,6 +44,14 @@ target_link_libraries(noddle_tests
         Qt6::Widgets
         QtNodes::QtNodes
 )
+
+if(NODDLE_WITH_PYTHON_PLUGIN)
+    find_package(Python3 COMPONENTS Interpreter Development QUIET)
+    if(Python3_Development_FOUND)
+        target_compile_definitions(noddle_tests PRIVATE NODDLE_WITH_PYTHON_PLUGIN)
+        target_link_libraries(noddle_tests PRIVATE Python3::Python)
+    endif()
+endif()
 
 include(CTest)
 include(Catch)

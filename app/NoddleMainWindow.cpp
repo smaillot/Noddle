@@ -35,6 +35,7 @@
 #include "nodes/PointCloudSourceModel.hpp"
 #include "nodes/CameraSourceModel.hpp"
 #include "nodes/ImageDisplayModel.hpp"
+#include "nodes/PythonPluginModel.hpp"
 
 #ifdef NODDLE_WITH_OPENCV
 #include "nodes/opencv/ColorConvertModel.hpp"
@@ -526,6 +527,9 @@ std::shared_ptr<NodeDelegateModelRegistry> NoddleMainWindow::createRegistry()
 
     // Display nodes
     registry->registerModel<ImageDisplayModel>("Display");
+
+    // Custom nodes
+    registry->registerModel<PythonPluginModel>("Custom");
 
 #ifdef NODDLE_WITH_OPENCV
     // OpenCV processing nodes
