@@ -1,12 +1,32 @@
 #pragma once
 
 #include <QString>
+#include <QVariant>
+#include <QVariantMap>
+#include <QVector>
 
 #include <optional>
 
 #include "data/ImageData.hpp"
 
 namespace noddle {
+
+enum class PythonPluginParamType {
+    Integer,
+    Double,
+    Boolean,
+    String,
+};
+
+struct PythonPluginParamSpec {
+    QString name;
+    QString label;
+    PythonPluginParamType type = PythonPluginParamType::String;
+    QVariant defaultValue;
+    QVariant minValue;
+    QVariant maxValue;
+    QVariant stepValue;
+};
 
 class PythonPluginRuntime
 {
@@ -22,8 +42,11 @@ public:
     bool setPluginFile(QString const &filePath, QString &error);
     QString pluginFile() const { return m_pluginFile; }
     QString pluginName() const { return m_pluginName; }
+    QVector<PythonPluginParamSpec> parameterSpecs() const { return m_paramSpecs; }
+    QVariantMap defaultParameters() const;
 
     std::optional<ImageData> process(ImageData const &input, QString &error);
+    std::optional<ImageData> process(ImageData const &input, QVariantMap const &params, QString &error);
 
 private:
 #ifdef NODDLE_WITH_PYTHON_PLUGIN
@@ -33,6 +56,7 @@ private:
 
     QString m_pluginFile;
     QString m_pluginName;
+    QVector<PythonPluginParamSpec> m_paramSpecs;
 };
 
 } // namespace noddle

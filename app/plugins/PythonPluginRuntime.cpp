@@ -57,6 +57,107 @@ QString colorSpaceString(ColorSpace cs)
     return QString::fromUtf8(colorSpaceName(cs));
 }
 
+QVariant pyObjectToVariant(PyObject *obj)
+{
+    if (!obj || obj == Py_None)
+        return {};
+    if (PyBool_Check(obj))
+        return obj == Py_True;
+    if (PyLong_Check(obj))
+        return static_cast<int>(PyLong_AsLong(obj));
+    if (PyFloat_Check(obj))
+        return PyFloat_AsDouble(obj);
+    if (PyUnicode_Check(obj))
+        return QString::fromUtf8(PyUnicode_AsUTF8(obj));
+    return {};
+}
+
+PyObject *variantToPyObject(QVariant const &value)
+{
+    switch (value.typeId()) {
+    case QMetaType::Bool:
+        return PyBool_FromLong(value.toBool() ? 1 : 0);
+    case QMetaType::Int:
+    case QMetaType::LongLong:
+    case QMetaType::UInt:
+    case QMetaType::ULongLong:
+        return PyLong_FromLongLong(value.toLongLong());
+    case QMetaType::Float:
+    case QMetaType::Double:
+        return PyFloat_FromDouble(value.toDouble());
+    default: {
+        QByteArray utf8 = value.toString().toUtf8();
+        return PyUnicode_FromString(utf8.constData());
+    }
+    }
+}
+
+noddle::PythonPluginParamType parseParamType(QString const &typeName)
+{
+    if (typeName.compare(QStringLiteral("int"), Qt::CaseInsensitive) == 0)
+        return noddle::PythonPluginParamType::Integer;
+    if (typeName.compare(QStringLiteral("float"), Qt::CaseInsensitive) == 0 ||
+        typeName.compare(QStringLiteral("double"), Qt::CaseInsensitive) == 0)
+        return noddle::PythonPluginParamType::Double;
+    if (typeName.compare(QStringLiteral("bool"), Qt::CaseInsensitive) == 0 ||
+        typeName.compare(QStringLiteral("boolean"), Qt::CaseInsensitive) == 0)
+        return noddle::PythonPluginParamType::Boolean;
+    return noddle::PythonPluginParamType::String;
+}
+
+bool parseParamSpecs(PyObject *paramsObj, QVector<noddle::PythonPluginParamSpec> &specs, QString &error)
+{
+    specs.clear();
+    if (!paramsObj || paramsObj == Py_None)
+        return true;
+    if (!PyDict_Check(paramsObj)) {
+        error = QStringLiteral("Plugin contract error: params must be a dict");
+        return false;
+    }
+
+    PyObject *key = nullptr;
+    PyObject *value = nullptr;
+    Py_ssize_t pos = 0;
+    while (PyDict_Next(paramsObj, &pos, &key, &value)) {
+        if (!PyUnicode_Check(key) || !PyDict_Check(value)) {
+            error = QStringLiteral("Plugin contract error: params entries must be name -> dict");
+            return false;
+        }
+
+        noddle::PythonPluginParamSpec spec;
+        spec.name = QString::fromUtf8(PyUnicode_AsUTF8(key));
+        spec.label = spec.name;
+
+        PyObject *typeObj = PyDict_GetItemString(value, "type");
+        if (!typeObj || !PyUnicode_Check(typeObj)) {
+            error = QStringLiteral("Plugin contract error: param '%1' missing string type").arg(spec.name);
+            return false;
+        }
+        spec.type = parseParamType(QString::fromUtf8(PyUnicode_AsUTF8(typeObj)));
+
+        PyObject *labelObj = PyDict_GetItemString(value, "label");
+        if (labelObj && PyUnicode_Check(labelObj))
+            spec.label = QString::fromUtf8(PyUnicode_AsUTF8(labelObj));
+
+        spec.defaultValue = pyObjectToVariant(PyDict_GetItemString(value, "default"));
+        spec.minValue = pyObjectToVariant(PyDict_GetItemString(value, "min"));
+        spec.maxValue = pyObjectToVariant(PyDict_GetItemString(value, "max"));
+        spec.stepValue = pyObjectToVariant(PyDict_GetItemString(value, "step"));
+
+        if (!spec.defaultValue.isValid()) {
+            switch (spec.type) {
+            case noddle::PythonPluginParamType::Integer: spec.defaultValue = 0; break;
+            case noddle::PythonPluginParamType::Double: spec.defaultValue = 0.0; break;
+            case noddle::PythonPluginParamType::Boolean: spec.defaultValue = false; break;
+            case noddle::PythonPluginParamType::String: spec.defaultValue = QString(); break;
+            }
+        }
+        specs.push_back(spec);
+    }
+
+    return true;
+}
+
 QImage normalizeInputImage(QImage const &src, ColorSpace cs)
 {
     if (src.isNull())
@@ -115,6 +216,7 @@ bool PythonPluginRuntime::setPluginFile(QString const &filePath, QString &error)
 {
     error.clear();
     m_pluginName.clear();
+    m_paramSpecs.clear();
 
 #ifndef NODDLE_WITH_PYTHON_PLUGIN
     Q_UNUSED(filePath)
@@ -237,6 +339,17 @@ bool PythonPluginRuntime::setPluginFile(QString const &filePath, QString &error)
     else
         m_pluginName = fi.baseName();
 
+    QVector<PythonPluginParamSpec> parsedSpecs;
+    if (!parseParamSpecs(PyDict_GetItemString(specObj, "params"), parsedSpecs, error)) {
+        Py_DECREF(specObj);
+        Py_DECREF(processFn);
+        Py_DECREF(pluginSpecFn);
+        Py_DECREF(globals);
+        Py_DECREF(locals);
+        PyGILState_Release(gil);
+        return false;
+    }
+
     if (m_impl->module) {
         Py_DECREF(m_impl->module);
         m_impl->module = nullptr;
@@ -244,6 +357,7 @@ bool PythonPluginRuntime::setPluginFile(QString const &filePath, QString &error)
     Py_INCREF(module);
     m_impl->module = module;
     m_pluginFile = fi.absoluteFilePath();
+    m_paramSpecs = parsedSpecs;
 
     Py_DECREF(specObj);
     Py_DECREF(processFn);
@@ -256,7 +370,22 @@ bool PythonPluginRuntime::setPluginFile(QString const &filePath, QString &error)
 #endif
 }
 
+QVariantMap PythonPluginRuntime::defaultParameters() const
+{
+    QVariantMap out;
+    for (auto const &spec : m_paramSpecs)
+        out.insert(spec.name, spec.defaultValue);
+    return out;
+}
+
 std::optional<ImageData> PythonPluginRuntime::process(ImageData const &input, QString &error)
+{
+    return process(input, {}, error);
+}
+
+std::optional<ImageData> PythonPluginRuntime::process(ImageData const &input,
+                                                      QVariantMap const &params,
+                                                      QString &error)
 {
     error.clear();
 
@@ -300,7 +429,16 @@ std::optional<ImageData> PythonPluginRuntime::process(ImageData const &input, QS
     PyDict_SetItemString(inputDict, "data", bytesObj);
     Py_DECREF(bytesObj);
 
-    PyObject *params = PyDict_New();
+    QVariantMap mergedParams = defaultParameters();
+    for (auto it = params.constBegin(); it != params.constEnd(); ++it)
+        mergedParams.insert(it.key(), it.value());
+
+    PyObject *paramsDict = PyDict_New();
+    for (auto it = mergedParams.constBegin(); it != mergedParams.constEnd(); ++it) {
+        PyObject *paramValue = variantToPyObject(it.value());
+        PyDict_SetItemString(paramsDict, it.key().toUtf8().constData(), paramValue);
+        Py_DECREF(paramValue);
+    }
     PyObject *context = PyDict_New();
     PyDict_SetItemString(context, "frame_id", PyLong_FromLong(0));
     PyDict_SetItemString(context, "timestamp_ms", PyLong_FromLong(0));
@@ -308,7 +446,7 @@ std::optional<ImageData> PythonPluginRuntime::process(ImageData const &input, QS
 
     PyObject *args = PyTuple_New(3);
     PyTuple_SetItem(args, 0, inputDict);
-    PyTuple_SetItem(args, 1, params);
+    PyTuple_SetItem(args, 1, paramsDict);
     PyTuple_SetItem(args, 2, context);
 
     PyObject *result = PyObject_CallObject(processFn, args);

@@ -20,10 +20,12 @@ add_executable(noddle_tests
     test_source_nodes.cpp
     test_runtime.cpp
     test_python_plugin_runtime.cpp
+    test_python_plugin_node_model.cpp
     test_widgets.cpp
     test_engine.cpp
     # Listed explicitly so AUTOMOC generates moc for Q_OBJECT macros
     ${CMAKE_SOURCE_DIR}/app/widgets/PipelineProfiler.hpp
+    ${CMAKE_SOURCE_DIR}/app/nodes/PythonPluginModel.hpp
     DummyModels.hpp
     # Engine sources needed by test_engine.cpp
     ${CMAKE_SOURCE_DIR}/app/engine/GraphSchedule.cpp
