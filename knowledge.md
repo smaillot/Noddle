@@ -370,3 +370,23 @@
   - Added `tests/test_python_plugin_runtime.cpp` (runtime unavailable path, missing file, valid identity plugin, plugin exception path).
   - Tests/CMake links `Python3::Python` only when available.
 - Validation result after kickoff increment: **90/90 tests passing**.
+
+### Phase 4B — Typed Plugin Parameters (2026-04-22)
+- `PythonPluginRuntime` now exposes plugin parameter metadata parsed from `plugin_spec()["params"]`.
+  - Supported MVP parameter types: `int`, `float`, `bool`, `string`.
+  - New runtime API:
+    - `parameterSpecs()`
+    - `defaultParameters()`
+    - `process(input, params, error)` overload with runtime parameter injection.
+- Parameter contract format in Python plugins:
+  - `params` is a dict `name -> spec dict`
+  - supported fields: `type`, `default`, `min`, `max`, `step`, `label`
+- `PythonPluginModel` now builds parameter editors dynamically from plugin metadata.
+  - Editors generated with stable object names `param_<name>`.
+  - Supported widgets: `QSpinBox`, `QDoubleSpinBox`, `QCheckBox`, `QLineEdit`.
+  - Parameter values persist in node JSON under `params`.
+  - Saved values are restored on reload before plugin widget reconstruction.
+- New tests:
+  - `tests/test_python_plugin_node_model.cpp`
+  - Covers typed parameter metadata extraction, runtime parameter passing to plugin `process`, and save/load restoration in `PythonPluginModel`.
+- Validation result after typed-parameter increment: **93/93 tests passing**.
