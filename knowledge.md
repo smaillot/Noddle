@@ -342,3 +342,31 @@
 - Fixed `QtConcurrent::run()` nodiscard warning with `(void)` cast.
 - Fixed deprecated `[=]` lambda captures to explicit `[this, ...]` lists.
 - All 86 tests pass on merged develop.
+
+### Phase 4B — Python Plugins MVP Kickoff (2026-04-22)
+- Branch created: `feature/phase4b-python-plugins`.
+- Scope locked for MVP kickoff:
+  - execution mode: **in-process** Python,
+  - data scope: **image-only** (`ImageData`) for first increment.
+- New optional build flag at root CMake: `NODDLE_WITH_PYTHON_PLUGIN` (default ON).
+- New runtime service: `app/plugins/PythonPluginRuntime.hpp/.cpp`.
+  - Embeds Python interpreter when available (`Python3::Python`),
+  - Loads plugin modules from `.py` files,
+  - Validates plugin contract:
+    - `plugin_spec()` callable returning dict,
+    - `api_version == "4b.image.v1"`,
+    - `process(...)` callable.
+  - Executes plugin `process(input_image, params, context)` and maps dict payload back to `ImageData`.
+  - Contract payload (MVP): width/height/channels/row_stride/color_space/data(bytes), `uint8`, HWC layout.
+- New node model: `app/nodes/PythonPluginModel.hpp`.
+  - Category: `Custom` in registry.
+  - Ports: 1 image input / 1 image output.
+  - Embedded widget: plugin path selector + status + processing time.
+  - Async-safe pattern preserved: no UI mutation in worker path, `refreshWidgets()` on UI thread.
+- App CMake integrates optional Python linkage:
+  - If Python development headers/libs are found: define `NODDLE_WITH_PYTHON_PLUGIN` and link `Python3::Python`.
+  - If not found: app still builds, node reports Python support disabled.
+- Tests:
+  - Added `tests/test_python_plugin_runtime.cpp` (runtime unavailable path, missing file, valid identity plugin, plugin exception path).
+  - Tests/CMake links `Python3::Python` only when available.
+- Validation result after kickoff increment: **90/90 tests passing**.
