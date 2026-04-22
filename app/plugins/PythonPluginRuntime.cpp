@@ -186,6 +186,11 @@ PythonPluginRuntime::PythonPluginRuntime()
     QMutexLocker lock(&pythonMutex());
     if (!Py_IsInitialized()) {
         Py_Initialize();
+        // Release the GIL after initialization so worker threads can acquire it
+        // via PyGILState_Ensure/Release. Without this, the main thread holds the
+        // GIL permanently and any QtConcurrent worker calling PyGILState_Ensure
+        // blocks forever (deadlock).
+        PyEval_SaveThread();
     }
     m_impl = new Impl();
 #endif

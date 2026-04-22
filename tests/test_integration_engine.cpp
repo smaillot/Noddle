@@ -8,6 +8,8 @@
 #include "engine/PipelineExecutor.hpp"
 #include "engine/GraphSchedule.hpp"
 #include "DummyModels.hpp"
+#include "data/ImageData.hpp"
+#include "nodes/PythonPluginModel.hpp"
 
 #include <QtNodes/DataFlowGraphModel>
 #include <QtNodes/NodeDelegateModelRegistry>
@@ -15,6 +17,9 @@
 #include <QCoreApplication>
 #include <QSignalSpy>
 #include <QTest>
+#include <QTemporaryDir>
+#include <QFile>
+#include <QTextStream>
 
 #include <algorithm>
 #include <memory>
@@ -37,6 +42,96 @@ int main(int argc, char *argv[])
 
 namespace {
 
+class DummyImageSourceModel : public QtNodes::NodeDelegateModel {
+public:
+    QString caption() const override { return QStringLiteral("DummyImageSource"); }
+    QString name() const override { return QStringLiteral("DummyImageSource"); }
+    unsigned int nPorts(QtNodes::PortType pt) const override
+    {
+        return (pt == QtNodes::PortType::Out) ? 1 : 0;
+    }
+    QtNodes::NodeDataType dataType(QtNodes::PortType, QtNodes::PortIndex) const override
+    {
+        return ImageData(QImage()).type();
+    }
+    void setInData(std::shared_ptr<QtNodes::NodeData>, QtNodes::PortIndex) override {}
+    std::shared_ptr<QtNodes::NodeData> outData(QtNodes::PortIndex) override { return m_data; }
+    QWidget *embeddedWidget() override { return nullptr; }
+
+    void emitImage(QImage const &image, ColorSpace colorSpace)
+    {
+        m_data = std::make_shared<ImageData>(image, colorSpace);
+        Q_EMIT dataUpdated(0);
+    }
+
+private:
+    std::shared_ptr<ImageData> m_data;
+};
+
+class DummyImageSinkModel : public QtNodes::NodeDelegateModel {
+public:
+    QString caption() const override { return QStringLiteral("DummyImageSink"); }
+    QString name() const override { return QStringLiteral("DummyImageSink"); }
+    unsigned int nPorts(QtNodes::PortType pt) const override
+    {
+        return (pt == QtNodes::PortType::In) ? 1 : 0;
+    }
+    QtNodes::NodeDataType dataType(QtNodes::PortType, QtNodes::PortIndex) const override
+    {
+        return ImageData(QImage()).type();
+    }
+    void setInData(std::shared_ptr<QtNodes::NodeData> data, QtNodes::PortIndex) override
+    {
+        ++m_calls;
+        auto img = std::dynamic_pointer_cast<ImageData>(data);
+        if (img && !img->image().isNull()) {
+            ++m_validCalls;
+            m_last = img;
+        }
+    }
+    std::shared_ptr<QtNodes::NodeData> outData(QtNodes::PortIndex) override { return {}; }
+    QWidget *embeddedWidget() override { return nullptr; }
+
+    void clear()
+    {
+        m_calls = 0;
+        m_validCalls = 0;
+        m_last.reset();
+    }
+
+    int validCalls() const { return m_validCalls; }
+    std::shared_ptr<ImageData> lastImage() const { return m_last; }
+
+private:
+    int m_calls = 0;
+    int m_validCalls = 0;
+    std::shared_ptr<ImageData> m_last;
+};
+
+QString writeIdentityPluginFile(QTemporaryDir &dir)
+{
+    QString path = dir.path() + QDir::separator() + QStringLiteral("identity_integration.py");
+    QFile f(path);
+    if (!f.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text))
+        return {};
+
+    QTextStream ts(&f);
+    ts << "def plugin_spec():\n"
+          "    return {'api_version': '4b.image.v1', 'id': 'test.identity.integration', 'name': 'Identity Integration'}\n"
+          "\n"
+          "def process(input_image, params, context):\n"
+          "    return {\n"
+          "        'width': input_image['width'],\n"
+          "        'height': input_image['height'],\n"
+          "        'channels': input_image['channels'],\n"
+          "        'row_stride': input_image['row_stride'],\n"
+          "        'color_space': input_image.get('color_space', 'RGB'),\n"
+          "        'data': input_image['data'],\n"
+          "    }\n";
+    f.close();
+    return path;
+}
+
 std::shared_ptr<NodeDelegateModelRegistry> makeIntegrationRegistry()
 {
     auto reg = std::make_shared<NodeDelegateModelRegistry>();
@@ -45,6 +140,9 @@ std::shared_ptr<NodeDelegateModelRegistry> makeIntegrationRegistry()
     reg->registerModel<DummyRecorderModel>("Test");
     reg->registerModel<DummyProcessModel>("Test");
     reg->registerModel<DummySinkModel>("Test");
+    reg->registerModel<DummyImageSourceModel>("Test");
+    reg->registerModel<PythonPluginModel>("Test");
+    reg->registerModel<DummyImageSinkModel>("Test");
     return reg;
 }
 
@@ -333,4 +431,64 @@ TEST_CASE("PipelineExecutor — generation counter discards stale callbacks",
     QTest::qWait(100);
 
     REQUIRE_FALSE(executor.isRunning());
+}
+
+TEST_CASE("PipelineExecutor — image source through PythonPluginModel preserves dimensions",
+          "[integration][engine][python]")
+{
+#ifndef NODDLE_WITH_PYTHON_PLUGIN
+    SUCCEED("Python plugin support disabled in this build");
+    return;
+#else
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    QString pluginPath = writeIdentityPluginFile(dir);
+    REQUIRE_FALSE(pluginPath.isEmpty());
+
+    auto reg = makeIntegrationRegistry();
+    DataFlowGraphModel model(reg);
+
+    NodeId sourceId = model.addNode("DummyImageSource");
+    NodeId pluginId = model.addNode("PythonPlugin");
+    NodeId sinkId = model.addNode("DummyImageSink");
+
+    model.addConnection({sourceId, 0, pluginId, 0});
+    model.addConnection({pluginId, 0, sinkId, 0});
+
+    auto *pluginNode = model.delegateModel<PythonPluginModel>(pluginId);
+    REQUIRE(pluginNode != nullptr);
+    QJsonObject pluginState;
+    pluginState["pluginPath"] = pluginPath;
+    pluginNode->load(pluginState);
+
+    auto *source = model.delegateModel<DummyImageSourceModel>(sourceId);
+    auto *sink = model.delegateModel<DummyImageSinkModel>(sinkId);
+    REQUIRE(source != nullptr);
+    REQUIRE(sink != nullptr);
+
+    sink->clear();
+
+    noddle::PipelineExecutor executor(model);
+    QSignalSpy wavefrontSpy(&executor, &noddle::PipelineExecutor::wavefrontCompleted);
+    executor.start();
+
+    QImage input(13, 7, QImage::Format_RGB888);
+    input.fill(Qt::black);
+    input.setPixelColor(0, 0, QColor(10, 20, 30));
+    input.setPixelColor(12, 6, QColor(200, 150, 100));
+
+    source->emitImage(input, ColorSpace::RGB);
+    REQUIRE(wavefrontSpy.wait(2000));
+
+    REQUIRE(sink->validCalls() >= 1);
+    auto out = sink->lastImage();
+    REQUIRE(out != nullptr);
+    REQUIRE(out->image().width() == input.width());
+    REQUIRE(out->image().height() == input.height());
+    REQUIRE(out->channels() == 3);
+    REQUIRE(out->image().pixelColor(0, 0) == input.pixelColor(0, 0));
+    REQUIRE(out->image().pixelColor(12, 6) == input.pixelColor(12, 6));
+
+    executor.stop();
+#endif
 }

@@ -66,6 +66,9 @@ find_package(Qt6 REQUIRED COMPONENTS Test Concurrent)
 add_executable(noddle_integration_tests
     test_integration_engine.cpp
     DummyModels.hpp
+    ${CMAKE_SOURCE_DIR}/app/widgets/PipelineProfiler.hpp
+    ${CMAKE_SOURCE_DIR}/app/nodes/PythonPluginModel.hpp
+    ${CMAKE_SOURCE_DIR}/app/plugins/PythonPluginRuntime.cpp
     ${CMAKE_SOURCE_DIR}/app/engine/GraphSchedule.cpp
     ${CMAKE_SOURCE_DIR}/app/engine/PipelineExecutor.cpp
 )
@@ -87,12 +90,20 @@ target_link_libraries(noddle_integration_tests
         QtNodes::QtNodes
 )
 
+if(NODDLE_WITH_PYTHON_PLUGIN)
+    find_package(Python3 COMPONENTS Interpreter Development QUIET)
+    if(Python3_Development_FOUND)
+        target_compile_definitions(noddle_integration_tests PRIVATE NODDLE_WITH_PYTHON_PLUGIN)
+        target_link_libraries(noddle_integration_tests PRIVATE Python3::Python)
+    endif()
+endif()
+
 catch_discover_tests(noddle_integration_tests)
 
 # Run tests automatically after build
 add_custom_command(
     TARGET noddle_tests POST_BUILD
-    COMMAND ${CMAKE_CTEST_COMMAND} --output-on-failure --test-dir ${CMAKE_CURRENT_BINARY_DIR}
+    COMMAND $<TARGET_FILE:noddle_tests>
     WORKING_DIRECTORY ${CMAKE_BINARY_DIR}
-    COMMENT "Running Noddle unit tests..."
+    COMMENT "Running Noddle unit tests (noddle_tests)..."
 )

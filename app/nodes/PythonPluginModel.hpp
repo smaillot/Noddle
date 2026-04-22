@@ -84,6 +84,10 @@ public:
             m_pluginPath = j["pluginPath"].toString();
         m_paramValues = j["params"].toObject().toVariantMap();
 
+        // Headless compatibility: load direct plugin path even if widget was not created yet.
+        if (m_combo == nullptr && m_pluginFolderPath.isEmpty() && !m_pluginPath.isEmpty())
+            loadPlugin();
+
         // Refresh UI if widget was already created before load() was called
         if (m_combo && !m_pluginFolderPath.isEmpty())
             scanPlugins();
