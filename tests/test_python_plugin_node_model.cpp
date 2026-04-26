@@ -11,6 +11,7 @@
 #include <QJsonObject>
 #include <QSpinBox>
 #include <QTemporaryDir>
+#include <QTextEdit>
 #include <QTextStream>
 
 namespace {
@@ -198,4 +199,143 @@ TEST_CASE("PythonPluginModel — saves and restores typed parameter values", "[p
     REQUIRE(restoredIterations->value() == 6);
     REQUIRE(restoredMix->value() == Approx(0.8));
     REQUIRE(restoredEnabled->isChecked() == false);
+}
+
+TEST_CASE("PythonPluginModel — embedded script editor saves plugin file", "[plugin][python][node][script]")
+{
+    ensureApp();
+
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    QString pluginPath = writePluginFile(
+        dir,
+        "editable_plugin.py",
+        "def plugin_spec():\n"
+        "    return {\n"
+        "        'api_version': '4b.image.v1',\n"
+        "        'id': 'demo.editable',\n"
+        "        'name': 'Editable',\n"
+        "        'params': {}\n"
+        "    }\n"
+        "\n"
+        "def process(input_image, params, context):\n"
+        "    return input_image\n");
+
+    PythonPluginModel model;
+    QJsonObject state;
+    state["pluginPath"] = pluginPath;
+    model.load(state);
+
+    QWidget *widget = model.embeddedWidget();
+    REQUIRE(widget != nullptr);
+
+    auto *editor = widget->findChild<QTextEdit *>("pluginScriptEditor");
+    REQUIRE(editor != nullptr);
+
+    auto buttons = widget->findChildren<QPushButton *>();
+    QPushButton *saveButton = nullptr;
+    for (auto *button : buttons) {
+        if (button->text() == "Save") {
+            saveButton = button;
+            break;
+        }
+    }
+    REQUIRE(saveButton != nullptr);
+
+    QString updatedScript = editor->toPlainText();
+    updatedScript += "\n# test marker\n";
+    editor->setPlainText(updatedScript);
+    saveButton->click();
+
+    QFile f(pluginPath);
+    REQUIRE(f.open(QIODevice::ReadOnly | QIODevice::Text));
+    QString const onDisk = QString::fromUtf8(f.readAll());
+    REQUIRE(onDisk.contains("# test marker"));
+}
+
+TEST_CASE("PythonPluginModel — createTemplatePlugin creates default script", "[plugin][python][node][template]")
+{
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+
+    QString createdPath;
+    QString error;
+    REQUIRE(PythonPluginModel::createTemplatePlugin(dir.path(), "my_filter", createdPath, error));
+    REQUIRE(error.isEmpty());
+    REQUIRE(createdPath.endsWith("my_filter.py"));
+
+    QFile file(createdPath);
+    REQUIRE(file.open(QIODevice::ReadOnly | QIODevice::Text));
+    QString const content = QString::fromUtf8(file.readAll());
+    REQUIRE(content.contains("\"api_version\": \"4b.image.v1\""));
+    REQUIRE(content.contains("\"id\": \"my_filter\""));
+    REQUIRE(content.contains("def process(input_image, params, context):"));
+}
+
+TEST_CASE("PythonPluginModel — createTemplatePlugin rejects existing file", "[plugin][python][node][template]")
+{
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+
+    QString createdPath;
+    QString error;
+    REQUIRE(PythonPluginModel::createTemplatePlugin(dir.path(), "existing.py", createdPath, error));
+
+    QString secondPath;
+    QString secondError;
+    REQUIRE_FALSE(PythonPluginModel::createTemplatePlugin(dir.path(), "existing.py", secondPath, secondError));
+    REQUIRE(secondPath.isEmpty());
+    REQUIRE(secondError.contains("already exists"));
+}
+
+TEST_CASE("PythonPluginModel — reload action can be triggered repeatedly", "[plugin][python][node][reload]")
+{
+    ensureApp();
+
+    QTemporaryDir dir;
+    REQUIRE(dir.isValid());
+    QString pluginPath = writePluginFile(
+        dir,
+        "reloadable_plugin.py",
+        "def plugin_spec():\n"
+        "    return {\n"
+        "        'api_version': '4b.image.v1',\n"
+        "        'id': 'demo.reloadable',\n"
+        "        'name': 'Reloadable',\n"
+        "        'params': {\n"
+        "            'gain': {'type': 'float', 'default': 1.0, 'min': 0.0, 'max': 3.0, 'step': 0.1}\n"
+        "        }\n"
+        "    }\n"
+        "\n"
+        "def process(input_image, params, context):\n"
+        "    return input_image\n");
+
+    PythonPluginModel model;
+    QJsonObject state;
+    state["pluginPath"] = pluginPath;
+    model.load(state);
+
+    QWidget *widget = model.embeddedWidget();
+    REQUIRE(widget != nullptr);
+
+    auto *editor = widget->findChild<QTextEdit *>("pluginScriptEditor");
+    REQUIRE(editor != nullptr);
+
+    auto buttons = widget->findChildren<QPushButton *>();
+    QPushButton *reloadButton = nullptr;
+    for (auto *button : buttons) {
+        if (button->text() == "Reload") {
+            reloadButton = button;
+            break;
+        }
+    }
+    REQUIRE(reloadButton != nullptr);
+
+    // Regression: repeated reload used to crash during parameter editor rebuild.
+    reloadButton->click();
+    reloadButton->click();
+
+    auto *gain = widget->findChild<QDoubleSpinBox *>("param_gain");
+    REQUIRE(gain != nullptr);
+    REQUIRE(editor->toPlainText().contains("def plugin_spec()"));
 }

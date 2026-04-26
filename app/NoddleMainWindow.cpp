@@ -9,6 +9,7 @@
 #include <QtNodes/internal/ConnectionIdUtils.hpp>
 
 #include <QAction>
+#include <QAbstractItemView>
 #include <QApplication>
 #include <QCloseEvent>
 #include <QCoreApplication>
@@ -20,6 +21,9 @@
 #include <QJsonArray>
 #include <QJsonDocument>
 #include <QJsonObject>
+#include <QMap>
+#include <QDockWidget>
+#include <QLineEdit>
 #include <QMenu>
 #include <QMenuBar>
 #include <QMessageBox>
@@ -27,8 +31,11 @@
 #include <QProgressDialog>
 #include <QSettings>
 #include <QStatusBar>
+#include <QTreeWidget>
+#include <QTreeWidgetItem>
 #include <QUndoCommand>
 #include <QUndoStack>
+#include <QVBoxLayout>
 
 #include "nodes/ImageSourceModel.hpp"
 #include "nodes/CsvSourceModel.hpp"
@@ -228,6 +235,8 @@ NoddleMainWindow::NoddleMainWindow(QWidget *parent)
 
     setCentralWidget(m_graphicsView);
     resize(1200, 800);
+
+    setupNodePalette();
 
     // Preview panel (right dock)
     m_previewPanel = new PreviewPanel(*m_graphModel, this);
@@ -506,6 +515,138 @@ void NoddleMainWindow::setupMenus()
     pipelineMenu->addAction(tr("&Clear Profiler"), this, []() {
         PipelineProfiler::instance().clear();
     });
+}
+
+void NoddleMainWindow::setupNodePalette()
+{
+    m_nodePaletteDock = new QDockWidget(tr("Block Library"), this);
+    m_nodePaletteDock->setAllowedAreas(Qt::LeftDockWidgetArea | Qt::RightDockWidgetArea);
+
+    auto *container = new QWidget(m_nodePaletteDock);
+    auto *layout = new QVBoxLayout(container);
+    layout->setContentsMargins(6, 6, 6, 6);
+    layout->setSpacing(6);
+
+    m_nodePaletteFilter = new QLineEdit(container);
+    m_nodePaletteFilter->setPlaceholderText(tr("Filter blocks..."));
+    layout->addWidget(m_nodePaletteFilter);
+
+    m_nodePaletteTree = new QTreeWidget(container);
+    m_nodePaletteTree->setHeaderHidden(true);
+    m_nodePaletteTree->setRootIsDecorated(true);
+    m_nodePaletteTree->setSelectionMode(QAbstractItemView::SingleSelection);
+    m_nodePaletteTree->setUniformRowHeights(true);
+    m_nodePaletteTree->setAlternatingRowColors(true);
+    m_nodePaletteTree->setToolTip(tr("Double-click a block to insert it into the graph"));
+    layout->addWidget(m_nodePaletteTree);
+
+    m_nodePaletteDock->setWidget(container);
+    addDockWidget(Qt::LeftDockWidgetArea, m_nodePaletteDock);
+
+    connect(m_nodePaletteFilter,
+            &QLineEdit::textChanged,
+            this,
+            &NoddleMainWindow::onPaletteFilterChanged);
+    connect(m_nodePaletteTree,
+            &QTreeWidget::itemDoubleClicked,
+            this,
+            &NoddleMainWindow::onPaletteItemActivated);
+    connect(m_nodePaletteTree,
+            &QTreeWidget::itemActivated,
+            this,
+            &NoddleMainWindow::onPaletteItemActivated);
+
+    populateNodePalette();
+}
+
+void NoddleMainWindow::populateNodePalette()
+{
+    if (!m_nodePaletteTree || !m_registry)
+        return;
+
+    m_nodePaletteTree->clear();
+
+    QMap<QString, QTreeWidgetItem *> categoryItems;
+    auto const associations = m_registry->registeredModelsCategoryAssociation();
+    for (auto const &entry : associations) {
+        QString const &nodeType = entry.first;
+        QString const &category = entry.second;
+
+        QTreeWidgetItem *categoryItem = nullptr;
+        auto it = categoryItems.find(category);
+        if (it == categoryItems.end()) {
+            categoryItem = new QTreeWidgetItem(m_nodePaletteTree, QStringList(category));
+            categoryItem->setFlags(categoryItem->flags() & ~Qt::ItemIsSelectable);
+            categoryItem->setFirstColumnSpanned(true);
+            categoryItem->setExpanded(true);
+            categoryItems.insert(category, categoryItem);
+        } else {
+            categoryItem = it.value();
+        }
+
+        auto *nodeItem = new QTreeWidgetItem(categoryItem, QStringList(nodeType));
+        nodeItem->setData(0, Qt::UserRole, nodeType);
+        nodeItem->setToolTip(0, tr("Insert %1").arg(nodeType));
+    }
+
+    m_nodePaletteTree->sortItems(0, Qt::AscendingOrder);
+    onPaletteFilterChanged(m_nodePaletteFilter ? m_nodePaletteFilter->text() : QString());
+}
+
+void NoddleMainWindow::onPaletteFilterChanged(QString const &text)
+{
+    if (!m_nodePaletteTree)
+        return;
+
+    QString const needle = text.trimmed();
+    for (int i = 0; i < m_nodePaletteTree->topLevelItemCount(); ++i) {
+        auto *categoryItem = m_nodePaletteTree->topLevelItem(i);
+        bool categoryVisible = false;
+        for (int j = 0; j < categoryItem->childCount(); ++j) {
+            auto *child = categoryItem->child(j);
+            bool match = needle.isEmpty()
+                         || child->text(0).contains(needle, Qt::CaseInsensitive);
+            child->setHidden(!match);
+            categoryVisible = categoryVisible || match;
+        }
+        categoryItem->setHidden(!categoryVisible);
+        if (categoryVisible)
+            categoryItem->setExpanded(true);
+    }
+}
+
+void NoddleMainWindow::onPaletteItemActivated(QTreeWidgetItem *item, int)
+{
+    if (!item)
+        return;
+
+    QString const nodeType = item->data(0, Qt::UserRole).toString();
+    if (nodeType.isEmpty())
+        return;
+
+    createNodeAtViewCenter(nodeType);
+}
+
+void NoddleMainWindow::createNodeAtViewCenter(QString const &nodeType)
+{
+    if (!m_graphModel || !m_graphicsView)
+        return;
+
+    QtNodes::NodeId nodeId = m_graphModel->addNode(nodeType);
+    if (nodeId == QtNodes::InvalidNodeId)
+        return;
+
+    QPointF const sceneCenter = m_graphicsView->mapToScene(m_graphicsView->viewport()->rect().center());
+    m_graphModel->setNodeData(nodeId, QtNodes::NodeRole::Position, sceneCenter);
+
+    if (auto *ngo = m_scene->nodeGraphicsObject(nodeId)) {
+        m_scene->clearSelection();
+        ngo->setSelected(true);
+    }
+
+    m_modified = true;
+    updateWindowTitle();
+    statusBar()->showMessage(tr("Inserted block: %1").arg(nodeType), 1500);
 }
 
 void NoddleMainWindow::setupStatusBar()

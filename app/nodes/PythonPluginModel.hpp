@@ -6,15 +6,23 @@
 #include <QComboBox>
 #include <QDir>
 #include <QDoubleSpinBox>
+#include <QFile>
 #include <QFileDialog>
+#include <QFileInfo>
 #include <QFormLayout>
 #include <QHBoxLayout>
+#include <QInputDialog>
 #include <QJsonObject>
 #include <QLabel>
 #include <QLineEdit>
+#include <QMessageBox>
 #include <QPushButton>
+#include <QRegularExpression>
+#include <QSignalBlocker>
 #include <QSpinBox>
 #include <QStandardPaths>
+#include <QTextEdit>
+#include <QTextStream>
 #include <QVariantMap>
 #include <QVBoxLayout>
 
@@ -108,8 +116,10 @@ public:
             m_folderEdit->setPlaceholderText("Plugin folder...");
             auto *browseFolder = new QPushButton("...");
             browseFolder->setFixedWidth(28);
+            auto *newTemplate = new QPushButton("Template");
             folderRow->addWidget(m_folderEdit);
             folderRow->addWidget(browseFolder);
+            folderRow->addWidget(newTemplate);
             layout->addLayout(folderRow);
 
             // ── Plugin combo ──
@@ -121,6 +131,22 @@ public:
             // ── Param editors ──
             m_paramsLayout = new QFormLayout();
             layout->addLayout(m_paramsLayout);
+
+            // ── Script editor ──
+            m_scriptEditor = new QTextEdit();
+            m_scriptEditor->setObjectName("pluginScriptEditor");
+            m_scriptEditor->setPlaceholderText("Plugin script...");
+            m_scriptEditor->setMinimumHeight(140);
+            m_scriptEditor->setEnabled(false);
+            layout->addWidget(m_scriptEditor);
+
+            auto *scriptRow = new QHBoxLayout();
+            m_scriptReloadButton = new QPushButton("Reload");
+            m_scriptSaveButton = new QPushButton("Save");
+            m_scriptSaveButton->setEnabled(false);
+            scriptRow->addWidget(m_scriptReloadButton);
+            scriptRow->addWidget(m_scriptSaveButton);
+            layout->addLayout(scriptRow);
 
             // ── Status / timing ──
             m_statusLabel = new QLabel("No plugin loaded");
@@ -145,12 +171,28 @@ public:
                 m_folderEdit->setText(dir);
                 scanPlugins();
             });
+            connect(newTemplate, &QPushButton::clicked, this, [this]() {
+                createTemplatePluginInteractive();
+            });
             connect(m_combo, &QComboBox::currentIndexChanged, this, [this](int index) {
                 QString filePath = m_combo->itemData(index).toString();
                 m_selectedPluginId = m_combo->itemData(index, Qt::UserRole + 1).toString();
                 m_pluginPath = filePath;
                 loadPlugin();
                 process();
+            });
+            connect(m_scriptEditor, &QTextEdit::textChanged, this, [this]() {
+                m_scriptDirty = true;
+                if (m_scriptSaveButton)
+                    m_scriptSaveButton->setEnabled(!m_pluginPath.isEmpty());
+            });
+            connect(m_scriptReloadButton, &QPushButton::clicked, this, [this]() {
+                loadScriptFromFile();
+                loadPlugin();
+                process();
+            });
+            connect(m_scriptSaveButton, &QPushButton::clicked, this, [this]() {
+                saveScriptToFile();
             });
 
             // Restore state after load()
@@ -174,6 +216,83 @@ public:
                 PipelineProfiler::TimeWindow::Sec1);
             m_timeLabel->setText(QString("%1 ms").arg(ms, 0, 'f', 2));
         }
+    }
+
+    static bool createTemplatePlugin(QString const &folderPath,
+                                     QString const &fileName,
+                                     QString &createdPath,
+                                     QString &error)
+    {
+        createdPath.clear();
+        error.clear();
+
+        QString normalizedFolder = folderPath.trimmed();
+        if (normalizedFolder.isEmpty()) {
+            error = QStringLiteral("Plugin folder is empty");
+            return false;
+        }
+
+        QDir dir(normalizedFolder);
+        if (!dir.exists() && !QDir().mkpath(normalizedFolder)) {
+            error = QStringLiteral("Cannot create plugin folder");
+            return false;
+        }
+
+        QString normalizedFileName = fileName.trimmed();
+        if (normalizedFileName.isEmpty()) {
+            error = QStringLiteral("Plugin file name is empty");
+            return false;
+        }
+        if (!normalizedFileName.endsWith(QStringLiteral(".py"), Qt::CaseInsensitive))
+            normalizedFileName += QStringLiteral(".py");
+
+        QString pluginId = QFileInfo(normalizedFileName).completeBaseName().toLower();
+        pluginId.replace(QRegularExpression(QStringLiteral("[^a-z0-9_]+")), QStringLiteral("_"));
+        pluginId.replace(QRegularExpression(QStringLiteral("_+")), QStringLiteral("_"));
+        while (pluginId.startsWith(QLatin1Char('_')))
+            pluginId.remove(0, 1);
+        while (pluginId.endsWith(QLatin1Char('_')))
+            pluginId.chop(1);
+        if (pluginId.isEmpty())
+            pluginId = QStringLiteral("custom_plugin");
+
+        QString pluginName = pluginId;
+        pluginName.replace(QLatin1Char('_'), QLatin1Char(' '));
+        if (!pluginName.isEmpty())
+            pluginName[0] = pluginName[0].toUpper();
+
+        QString fullPath = dir.absoluteFilePath(normalizedFileName);
+        if (QFileInfo::exists(fullPath)) {
+            error = QStringLiteral("Plugin file already exists");
+            return false;
+        }
+
+        QFile file(fullPath);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+            error = QStringLiteral("Cannot create plugin file");
+            return false;
+        }
+
+        QTextStream ts(&file);
+        ts << QStringLiteral(
+            "def plugin_spec():\n"
+            "    return {\n"
+            "        \"api_version\": \"4b.image.v1\",\n"
+            "        \"id\": \"%1\",\n"
+            "        \"name\": \"%2\",\n"
+            "        \"params\": {\n"
+            "            \"gain\": {\"type\": \"float\", \"default\": 1.0, \"min\": 0.0, \"max\": 3.0, \"step\": 0.1}\n"
+            "        }\n"
+            "    }\n"
+            "\n"
+            "def process(input_image, params, context):\n"
+            "    # TODO: implement your custom logic\n"
+            "    return input_image\n")
+                  .arg(pluginId, pluginName);
+        file.close();
+
+        createdPath = fullPath;
+        return true;
     }
 
 private:
@@ -219,21 +338,10 @@ private:
     {
         if (!m_paramsLayout)
             return;
-        while (m_paramsLayout->rowCount() > 0) {
-            auto *labelItem = m_paramsLayout->itemAt(0, QFormLayout::LabelRole);
-            auto *fieldItem = m_paramsLayout->itemAt(0, QFormLayout::FieldRole);
-            if (labelItem) {
-                if (auto *widget = labelItem->widget())
-                    delete widget;
-                delete labelItem;
-            }
-            if (fieldItem) {
-                if (auto *widget = fieldItem->widget())
-                    delete widget;
-                delete fieldItem;
-            }
+        // QFormLayout::removeRow already deletes row items/widgets. Manually
+        // deleting them here can cause double-free when reloading plugins.
+        while (m_paramsLayout->rowCount() > 0)
             m_paramsLayout->removeRow(0);
-        }
     }
 
     void rebuildParamEditors()
@@ -310,6 +418,15 @@ private:
             m_pluginLoaded = false;
             m_statusText = QStringLiteral("No plugin loaded");
             clearParamEditors();
+            if (m_scriptEditor) {
+                QSignalBlocker blocker(m_scriptEditor);
+                m_scriptEditor->clear();
+                m_scriptEditor->setEnabled(false);
+            }
+            if (m_scriptSaveButton)
+                m_scriptSaveButton->setEnabled(false);
+            if (m_scriptReloadButton)
+                m_scriptReloadButton->setEnabled(false);
             refreshWidgets();
             return;
         }
@@ -326,10 +443,125 @@ private:
             m_statusText = n.isEmpty() ? QStringLiteral("Plugin loaded")
                                        : QStringLiteral("Loaded: %1").arg(n);
             rebuildParamEditors();
+            loadScriptFromFile();
         } else {
             m_statusText = err;
             clearParamEditors();
+            if (m_scriptSaveButton)
+                m_scriptSaveButton->setEnabled(false);
+            if (m_scriptReloadButton)
+                m_scriptReloadButton->setEnabled(!m_pluginPath.isEmpty());
         }
+        refreshWidgets();
+    }
+
+    void loadScriptFromFile()
+    {
+        if (!m_scriptEditor)
+            return;
+
+        if (m_pluginPath.isEmpty()) {
+            QSignalBlocker blocker(m_scriptEditor);
+            m_scriptEditor->clear();
+            m_scriptEditor->setEnabled(false);
+            return;
+        }
+
+        QFile file(m_pluginPath);
+        if (!file.open(QIODevice::ReadOnly | QIODevice::Text)) {
+            m_statusText = QStringLiteral("Cannot open script for reading");
+            return;
+        }
+
+        QTextStream ts(&file);
+        QString const content = ts.readAll();
+        {
+            QSignalBlocker blocker(m_scriptEditor);
+            m_scriptEditor->setPlainText(content);
+        }
+        m_scriptEditor->setEnabled(true);
+        m_scriptDirty = false;
+        if (m_scriptSaveButton)
+            m_scriptSaveButton->setEnabled(false);
+        if (m_scriptReloadButton)
+            m_scriptReloadButton->setEnabled(true);
+    }
+
+    void saveScriptToFile()
+    {
+        if (!m_scriptEditor || m_pluginPath.isEmpty())
+            return;
+
+        QFile file(m_pluginPath);
+        if (!file.open(QIODevice::WriteOnly | QIODevice::Truncate | QIODevice::Text)) {
+            m_statusText = QStringLiteral("Cannot save script");
+            refreshWidgets();
+            return;
+        }
+
+        QTextStream ts(&file);
+        ts << m_scriptEditor->toPlainText();
+        file.close();
+
+        m_scriptDirty = false;
+        if (m_scriptSaveButton)
+            m_scriptSaveButton->setEnabled(false);
+
+        // Reload plugin module immediately so node output reflects latest script.
+        loadPlugin();
+        process();
+    }
+
+    void createTemplatePluginInteractive()
+    {
+        QString folderPath = m_pluginFolderPath.trimmed();
+        if (folderPath.isEmpty())
+            folderPath = defaultPluginFolder();
+
+        if (!QDir().mkpath(folderPath)) {
+            m_statusText = QStringLiteral("Cannot create plugin folder");
+            refreshWidgets();
+            return;
+        }
+
+        bool ok = false;
+        QString fileName = QInputDialog::getText(nullptr,
+                                                 QStringLiteral("New Plugin from Template"),
+                                                 QStringLiteral("Plugin file name:"),
+                                                 QLineEdit::Normal,
+                                                 QStringLiteral("custom_plugin.py"),
+                                                 &ok)
+                               .trimmed();
+        if (!ok || fileName.isEmpty())
+            return;
+
+        QString createdPath;
+        QString error;
+        if (!createTemplatePlugin(folderPath, fileName, createdPath, error)) {
+            QMessageBox::warning(nullptr,
+                                 QStringLiteral("Template creation failed"),
+                                 error);
+            m_statusText = error;
+            refreshWidgets();
+            return;
+        }
+
+        m_pluginFolderPath = folderPath;
+        if (m_folderEdit)
+            m_folderEdit->setText(folderPath);
+
+        scanPlugins();
+
+        if (m_combo) {
+            for (int i = 1; i < m_combo->count(); ++i) {
+                if (m_combo->itemData(i).toString() == createdPath) {
+                    m_combo->setCurrentIndex(i);
+                    break;
+                }
+            }
+        }
+
+        m_statusText = QStringLiteral("Template plugin created");
         refreshWidgets();
     }
 
@@ -384,6 +616,9 @@ private:
     QFormLayout *m_paramsLayout = nullptr;
     QLineEdit *m_folderEdit = nullptr;
     QComboBox *m_combo = nullptr;
+    QTextEdit *m_scriptEditor = nullptr;
+    QPushButton *m_scriptReloadButton = nullptr;
+    QPushButton *m_scriptSaveButton = nullptr;
     QLabel *m_statusLabel = nullptr;
     QLabel *m_timeLabel = nullptr;
 
@@ -393,6 +628,7 @@ private:
     QString m_pluginPath;   // resolved absolute path of selected plugin
     QString m_statusText;
     bool m_pluginLoaded = false;
+    bool m_scriptDirty = false;
     QVariantMap m_paramValues;
 
     std::shared_ptr<ImageData> m_input;

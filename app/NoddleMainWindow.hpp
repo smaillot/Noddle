@@ -11,6 +11,10 @@
 
 class QLabel;
 class QMenu;
+class QDockWidget;
+class QLineEdit;
+class QTreeWidget;
+class QTreeWidgetItem;
 class QTimer;
 class PreviewPanel;
 class TimelineView;
@@ -36,9 +40,14 @@ private slots:
     void onSceneModified();
     void onOpenRecent();
     void onBenchmarkPipeline();
+    void onPaletteFilterChanged(QString const &text);
+    void onPaletteItemActivated(QTreeWidgetItem *item, int column);
 
 private:
     void setupMenus();
+    void setupNodePalette();
+    void populateNodePalette();
+    void createNodeAtViewCenter(QString const &nodeType);
     void setupStatusBar();
     std::shared_ptr<QtNodes::NodeDelegateModelRegistry> createRegistry();
     void updateWindowTitle();
@@ -53,6 +62,9 @@ private:
     QtNodes::DataFlowGraphModel *m_graphModel;
     QtNodes::DataFlowGraphicsScene *m_scene;
     QtNodes::GraphicsView *m_graphicsView;
+    QDockWidget *m_nodePaletteDock = nullptr;
+    QLineEdit *m_nodePaletteFilter = nullptr;
+    QTreeWidget *m_nodePaletteTree = nullptr;
     PreviewPanel *m_previewPanel;
     TimelineView *m_timelineView;
 

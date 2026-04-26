@@ -390,3 +390,75 @@
   - `tests/test_python_plugin_node_model.cpp`
   - Covers typed parameter metadata extraction, runtime parameter passing to plugin `process`, and save/load restoration in `PythonPluginModel`.
 - Validation result after typed-parameter increment: **93/93 tests passing**.
+
+### Phase 4B — Folder Scan + GIL Fix (2026-04-23)
+- `PythonPluginRuntime` enhanced with directory scanning:
+  - `PluginDescriptor` struct: `id`, `name`, `path`, `description`, `apiVersion`.
+  - `scanDirectory(dirPath)` → `QVector<PluginDescriptor>`: scans a folder for valid `.py` plugins and returns descriptors for all that pass contract validation.
+- `PythonPluginModel` updated to folder-based plugin selection:
+  - Folder picker button replaces single-file selector.
+  - QComboBox populated from `scanDirectory()` results.
+  - Persistent save/load fields: `pluginFolderPath`, `selectedPluginId`, `pluginPath` (kept for legacy compatibility).
+  - Parameter editors reconstructed dynamically on plugin switch.
+- **CRITICAL FIX — Python GIL deadlock**:
+  - Root cause: `Py_Initialize()` acquires the GIL on the calling thread (main thread). Without releasing it, any worker thread calling `PyGILState_Ensure()` (via `QtConcurrent::run`) blocks indefinitely.
+  - Fix: `PyEval_SaveThread()` called immediately after `Py_Initialize()` in `PythonPluginRuntime::PythonPluginRuntime()`, releasing the GIL so worker threads can acquire it.
+  - Each CPython API call site uses `PyGILState_Ensure()` / `PyGILState_Release()` RAII pattern.
+- New tests:
+  - `tests/test_python_plugin_runtime.cpp` extended: `scanDirectory` valid/invalid cases, GIL thread-safety (concurrent `process()` calls).
+  - `tests/test_integration_engine.cpp` extended: test #98 — `PipelineExecutor — image source through PythonPluginModel preserves dimensions` — end-to-end Source → PythonPlugin → Sink pipeline with `QSignalSpy` on `wavefrontCompleted`.
+- Validation progression: 93 → 97 → 98 tests passing.
+
+## Phase 4B — Python Plugins ✅ COMPLETE (2026-04-23)
+
+### Fonctionnalité
+- Support de plugins Python custom dans le pipeline CV.
+- Plugin contract:
+  - `api_version = "4b.image.v1"`
+  - `plugin_spec()` → dict (avec champs: `name`, `description`, `params`)
+  - `process(input_image, params, context)` → dict (payload image: `width`, `height`, `channels`, `row_stride`, `color_space`, `data` bytes)
+
+### UI Workflow Enhancements (2026-04-26)
+- **Left block library dock** added in `NoddleMainWindow`:
+  - New left panel "Block Library" with search filter and categorized tree of all registered node types (`NodeDelegateModelRegistry::registeredModelsCategoryAssociation()`).
+  - Blocks can now be inserted without right-click context menu: double-click/activate an item inserts a node at the current graph view center.
+  - Inserted node is auto-selected and the window modified state is updated immediately.
+- **Editable custom plugin script in node editor** (`PythonPluginModel`):
+  - Added embedded `QTextEdit` for the current plugin Python script.
+  - Added `Reload` and `Save` actions in the node widget.
+  - `Save` writes the script back to disk, reloads plugin metadata/runtime, and reprocesses current input so edits are reflected directly in pipeline behavior.
+  - Script editor is enabled only when a valid plugin is selected/loaded.
+  - Added `Template` action in folder row to bootstrap a new custom plugin from a default script template.
+  - If no folder is selected, template creation defaults to the standard plugin folder (`AppConfigLocation/plugins`).
+  - Template creation validates file naming, auto-appends `.py`, avoids overwrite, writes a valid `4b.image.v1` skeleton, rescans plugins, and auto-selects the created plugin.
+- Tests:
+  - Added `PythonPluginModel — embedded script editor saves plugin file` in `tests/test_python_plugin_node_model.cpp`.
+  - Added template tests: creation of default script and refusal when target file already exists.
+  - Reload crash fix: `clearParamEditors()` now relies on `QFormLayout::removeRow()` only; removed manual widget/item deletions that could double-free during repeated plugin reload.
+  - Added regression test: `PythonPluginModel — reload action can be triggered repeatedly`.
+  - Full validation after reload-fix enhancement: **102/102 tests passing**.
+
+### Composants
+- **`PythonPluginRuntime`** (`app/plugins/`):
+  - Chargement, validation, exécution de plugins Python in-process.
+  - `PluginDescriptor`: struct avec `id`, `name`, `path`, `description`, `apiVersion`.
+  - `scanDirectory(dirPath)` → `QVector<PluginDescriptor>`.
+  - `parameterSpecs()` / `defaultParameters()` pour paramètres typés (`int`, `float`, `bool`, `string`).
+  - GIL correctement géré: `PyEval_SaveThread()` post-init, `PyGILState_Ensure/Release` autour de chaque appel CPython.
+- **`PythonPluginModel`** (`app/nodes/`):
+  - `NodeDelegateModel` avec folder scan + QComboBox de sélection de plugin.
+  - Éditeurs de paramètres dynamiques (QSpinBox, QDoubleSpinBox, QCheckBox, QLineEdit).
+  - Sauvegarde persistante: `pluginFolderPath`, `selectedPluginId`, `pluginPath` (compat legacy).
+  - Async-safe: pas de mutation UI dans le worker path, `refreshWidgets()` sur UI thread.
+
+### Fix critique — GIL Python
+- `Py_Initialize()` donne le GIL au thread courant (main). Sans `PyEval_SaveThread()` après, les worker threads (`QtConcurrent`) bloquent indéfiniment sur `PyGILState_Ensure()`.
+- Fix: appel de `PyEval_SaveThread()` immédiatement après `Py_Initialize()` dans le constructeur `PythonPluginRuntime::PythonPluginRuntime()`.
+
+### Tests
+- **98 tests** (87 unitaires + 11 intégration).
+- Progression: 86 → 90 → 93 → 97 → 98.
+- Test #98: `PipelineExecutor — image source through PythonPluginModel preserves dimensions` — test bout-en-bout Source → PythonPlugin → Sink avec `QSignalSpy` sur `wavefrontCompleted`.
+
+### Branches
+- `feature/phase4b-python-plugins` mergée dans `develop` (fast-forward, 7 commits, tête: `56bf50c`).
